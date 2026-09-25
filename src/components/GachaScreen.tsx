@@ -84,7 +84,6 @@ export function GachaScreen() {
   const [phase, setPhase] = useState<PullPhase>('idle')
   const [pullCards, setPullCards] = useState<GachaPullCard[] | null>(null)
   const [bulkPacks, setBulkPacks] = useState<BulkPackResult[] | null>(null)
-  const [bulkCost, setBulkCost] = useState(0)
   const [flipped, setFlipped] = useState<boolean[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
   const [burst, setBurst] = useState<Rarity | null>(null)
@@ -184,7 +183,6 @@ export function GachaScreen() {
     setPhase('idle')
     setPullCards(null)
     setBulkPacks(null)
-    setBulkCost(0)
     setFlipped([])
     setActiveIndex(0)
     setBurst(null)
@@ -259,7 +257,6 @@ export function GachaScreen() {
     if (phase === 'done') {
       setPullCards(null)
       setBulkPacks(null)
-      setBulkCost(0)
       setFlipped([])
       setActiveIndex(0)
       setBurst(null)
@@ -362,7 +359,6 @@ export function GachaScreen() {
       if (box) setBox({ ...box, progress: res.progress })
       setPullCards(null)
       setBulkPacks(res.packs)
-      setBulkCost(res.totalCost)
       setPhase('bulk')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'เปิดทั้งกล่องไม่สำเร็จ')
@@ -441,13 +437,10 @@ export function GachaScreen() {
   const currentCard = pullCards?.[activeIndex] ?? null
   const isCurrentOpen = flipped[activeIndex] === true
   const openedCount = flipped.filter(Boolean).length
-  const bulkRares =
+  const bulkHighlights =
     bulkPacks?.flatMap((pack) =>
-      pack.cards.filter((c) => c.rarity === 'UR' || c.rarity === 'SR' || c.rarity === 'R'),
+      pack.cards.filter((c) => c.rarity === 'UR' || c.rarity === 'SR'),
     ) ?? []
-  const bulkUrCount = bulkRares.filter((c) => c.rarity === 'UR').length
-  const bulkSrCount = bulkRares.filter((c) => c.rarity === 'SR').length
-  const bulkRCount = bulkRares.filter((c) => c.rarity === 'R').length
 
   return (
     <div
@@ -823,48 +816,52 @@ export function GachaScreen() {
 
             {phase === 'bulk' && bulkPacks && (
               <div className="bulk-stage">
-                <header className="bulk-hero">
-                  <p className="bulk-kicker">เปิดทั้งกล่อง</p>
-                  <h2>
-                    {bulkPacks.length} ซอง · −{bulkCost.toLocaleString('th-TH')} เหรียญ
-                  </h2>
-                  <p className="bulk-summary">
-                    UR×{bulkUrCount} · SR×{bulkSrCount} · R×{bulkRCount} · รวม{' '}
-                    {bulkPacks.reduce((n, pack) => n + pack.cards.length, 0)} ใบ
-                  </p>
-                </header>
+                <div className="gacha-actions reveal-actions bulk-actions">
+                  <button
+                    type="button"
+                    className="gacha-open-btn"
+                    disabled={!canBuy}
+                    onClick={() => {
+                      resetPullStage()
+                      void onOpen()
+                    }}
+                  >
+                    เปิดซองถัดไป (−{box?.packCost ?? 20})
+                  </button>
+                  <button
+                    type="button"
+                    className="gacha-rebox-btn"
+                    onClick={resetPullStage}
+                  >
+                    กลับ
+                  </button>
+                </div>
 
-                {bulkRares.some((c) => c.rarity === 'UR' || c.rarity === 'SR') && (
-                  <section className="bulk-highlights">
-                    <h3>ไฮไลต์</h3>
+                {bulkHighlights.length > 0 && (
+                  <section className="bulk-highlights" aria-label="ไฮไลต์">
                     <div className="bulk-highlight-row">
-                      {bulkRares
-                        .filter((c) => c.rarity === 'UR' || c.rarity === 'SR')
-                        .map((c, i) => (
-                          <button
-                            key={`hi-${c.cardId}-${i}`}
-                            type="button"
-                            className={`bulk-card rarity-${c.rarity}`}
-                            onMouseEnter={(e) => {
-                              if (isCoarsePointer()) return
-                              showPoolPreview(c, e.currentTarget, c.rarity)
-                            }}
-                            onMouseLeave={() => {
-                              if (isCoarsePointer()) return
-                              clearHoverPreview()
-                            }}
-                            onClick={(e) => {
-                              if (!isCoarsePointer()) return
-                              togglePoolPreview(c, e.currentTarget, c.rarity)
-                            }}
-                            aria-label={getCard(c.cardId).nameTh}
-                          >
-                            <CardView cardId={c.cardId} size="small" hideName />
-                            <span className={`bulk-chip rarity-${c.rarity}`}>
-                              {c.rarity}
-                            </span>
-                          </button>
-                        ))}
+                      {bulkHighlights.map((c, i) => (
+                        <button
+                          key={`hi-${c.cardId}-${i}`}
+                          type="button"
+                          className={`bulk-card rarity-${c.rarity}`}
+                          onMouseEnter={(e) => {
+                            if (isCoarsePointer()) return
+                            showPoolPreview(c, e.currentTarget, c.rarity)
+                          }}
+                          onMouseLeave={() => {
+                            if (isCoarsePointer()) return
+                            clearHoverPreview()
+                          }}
+                          onClick={(e) => {
+                            if (!isCoarsePointer()) return
+                            togglePoolPreview(c, e.currentTarget, c.rarity)
+                          }}
+                          aria-label={getCard(c.cardId).nameTh}
+                        >
+                          <CardView cardId={c.cardId} size="small" hideName />
+                        </button>
+                      ))}
                     </div>
                   </section>
                 )}
@@ -904,27 +901,6 @@ export function GachaScreen() {
                       </div>
                     </article>
                   ))}
-                </div>
-
-                <div className="gacha-actions reveal-actions">
-                  <button
-                    type="button"
-                    className="gacha-open-btn"
-                    disabled={!canBuy}
-                    onClick={() => {
-                      resetPullStage()
-                      void onOpen()
-                    }}
-                  >
-                    เปิดซองถัดไป (−{box?.packCost ?? 20})
-                  </button>
-                  <button
-                    type="button"
-                    className="gacha-rebox-btn"
-                    onClick={resetPullStage}
-                  >
-                    กลับ
-                  </button>
                 </div>
               </div>
             )}
