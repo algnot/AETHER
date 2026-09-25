@@ -263,12 +263,24 @@ export function DuelBoard() {
       : 'มีน่า — เลือกนักรบจากเด็ค (ยกเว้นมีน่า)'
   const soluySwapping = game.interaction.type === 'soluy_swap'
   const shorinSearching = game.interaction.type === 'shorin_search'
+  const shorinStep =
+    game.interaction.type === 'shorin_search' ? game.interaction.step : null
+  const shorinDiscarding = shorinSearching && shorinStep === 'discard'
+  const shorinFetching = shorinSearching && shorinStep === 'fetch'
   const sarukaSearching = game.interaction.type === 'saruka_search'
   const sarukaStep =
     game.interaction.type === 'saruka_search' ? game.interaction.step : null
   const sarukaDiscarding = sarukaSearching && sarukaStep === 'discard'
   const sarukaFetching = sarukaSearching && sarukaStep === 'fetch'
-  const ryukaFetching = game.interaction.type === 'ryuka_fetch'
+  const ryukaSearching = game.interaction.type === 'ryuka_fetch'
+  const ryukaStep =
+    game.interaction.type === 'ryuka_fetch' ? game.interaction.step : null
+  const ryukaDiscardLeft =
+    game.interaction.type === 'ryuka_fetch'
+      ? (game.interaction.discardLeft ?? 0)
+      : 0
+  const ryukaDiscarding = ryukaSearching && ryukaStep === 'discard'
+  const ryukaFetching = ryukaSearching && ryukaStep === 'fetch'
   const ryukaSleeping =
     game.interaction.type === 'ryuka_sleep' &&
     game.interaction.ownerId === 'player'
@@ -328,7 +340,7 @@ export function DuelBoard() {
     !discarding &&
     !saraDiscarding &&
     !sarukaSearching &&
-    !ryukaFetching &&
+    !ryukaSearching &&
     !ryukaSleeping &&
     !shorinSearching &&
     !alkataCallDiscarding &&
@@ -492,6 +504,12 @@ export function DuelBoard() {
           ? 'ซารุกะ — ทิ้งการ์ดจากมือ 1 ใบ'
           : sarukaFetching
             ? 'ซารุกะ — เลือก「คาถา」จากเด็คหรือสุสานขึ้นมือ'
+          : shorinDiscarding
+            ? 'โชริน — ทิ้งการ์ดจากมือ 1 ใบ'
+          : shorinFetching
+            ? 'โชริน — เลือก「คาถา」จากเด็คหรือสุสานขึ้นมือ'
+          : ryukaDiscarding
+            ? `ริวกะ — ทิ้งการ์ดจากมือ (เหลือ ${ryukaDiscardLeft} ใบ)`
           : ryukaFetching
             ? 'ริวกะ — เลือก「คาถา」จากสุสานขึ้นมือ'
           : ryukaSleeping
@@ -526,7 +544,7 @@ export function DuelBoard() {
                     ? 'คาถาผู้ป้องกัน — เลือกจอมเวทย์บนสนามเราเพื่อล็อกจนจบเทิร์นฝ่ายตรงข้าม'
                   : buddyPicking
                     ? buddyFirstId
-                      ? 'คาถาคู่หู — เลือกจอมเวทย์ตัวที่สองเพื่อรวมพลังโจมตี'
+                      ? 'คาถาคู่หู — เลือกจอมเวทย์ตัวที่สองเพื่อรวมพลังโจมตีจนจบเทิร์น'
                       : 'คาถาคู่หู — เลือกจอมเวทย์ตัวแรกบนสนามเรา'
                   : hypnosisPicking
                     ? hypnosisFirstId
@@ -1062,6 +1080,18 @@ export function DuelBoard() {
                 </button>
               )}
 
+              {shorinDiscarding && isPlayerTurn && (
+                <button type="button" className="direct-btn" onClick={cancelShorin}>
+                  ยกเลิกโชริน
+                </button>
+              )}
+
+              {ryukaDiscarding && isPlayerTurn && ryukaDiscardLeft >= 2 && (
+                <button type="button" className="direct-btn" onClick={cancelRyuka}>
+                  ยกเลิกริวกะ
+                </button>
+              )}
+
               {ryukaSleeping && isPlayerTurn && (
                 <button type="button" className="direct-btn" onClick={cancelRyukaSleepPick}>
                   ข้ามริวกะ
@@ -1139,7 +1169,7 @@ export function DuelBoard() {
                 <div
                   key={c.instanceId}
                   data-coach-card={c.cardId}
-                  className={`hand-wrap ${canDrag ? 'draggable' : ''} ${tutorialForced ? 'coach-force' : ''} ${tutorialLockedOut ? 'coach-dim' : ''} ${trapMatch || discarding || saraDiscarding || sarukaDiscarding || alkataCallDiscarding || soluyHandPick || alkataHandPick ? 'trap-ready' : ''} ${summoning === c.instanceId || playingSpell === c.instanceId || reinforceSelected === c.instanceId || trapMatch || discarding || saraDiscarding || sarukaDiscarding || alkataCallDiscarding || soluyHandPick || alkataHandPick || tutorialForced ? 'picking' : ''}`}
+                  className={`hand-wrap ${canDrag ? 'draggable' : ''} ${tutorialForced ? 'coach-force' : ''} ${tutorialLockedOut ? 'coach-dim' : ''} ${trapMatch || discarding || saraDiscarding || sarukaDiscarding || shorinDiscarding || ryukaDiscarding || alkataCallDiscarding || soluyHandPick || alkataHandPick ? 'trap-ready' : ''} ${summoning === c.instanceId || playingSpell === c.instanceId || reinforceSelected === c.instanceId || trapMatch || discarding || saraDiscarding || sarukaDiscarding || shorinDiscarding || ryukaDiscarding || alkataCallDiscarding || soluyHandPick || alkataHandPick || tutorialForced ? 'picking' : ''}`}
                   draggable={canDrag}
                   onDragStart={(e) => {
                     if (canDragReinforce || canDragMonster)
@@ -1162,6 +1192,8 @@ export function DuelBoard() {
                       discarding ||
                       saraDiscarding ||
                       sarukaDiscarding ||
+                      shorinDiscarding ||
+                      ryukaDiscarding ||
                       alkataCallDiscarding ||
                       soluyHandPick ||
                       alkataHandPick ||
@@ -1172,7 +1204,7 @@ export function DuelBoard() {
                         ? true
                         : playerTrapWindow
                           ? !trapMatch
-                          : discarding || saraDiscarding || sarukaDiscarding || alkataCallDiscarding
+                          : discarding || saraDiscarding || sarukaDiscarding || shorinDiscarding || ryukaDiscarding || alkataCallDiscarding
                             ? false
                             : soluySwapping
                               ? !soluyHandPick
@@ -1398,7 +1430,7 @@ export function DuelBoard() {
           </div>
         )}
 
-        {shorinSearching && isPlayerTurn && (
+        {shorinFetching && isPlayerTurn && (
           <div
             className="gy-modal"
             role="dialog"
@@ -1407,9 +1439,6 @@ export function DuelBoard() {
             <div className="gy-panel">
               <header className="gy-head">
                 <h3>โชริน — เลือก「คาถา」จากเด็คหรือสุสาน</h3>
-                <button type="button" className="gy-close" onClick={cancelShorin}>
-                  ยกเลิก
-                </button>
               </header>
               {(() => {
                 const deckKata = player.deck.filter((c) =>
@@ -1435,7 +1464,7 @@ export function DuelBoard() {
                               pickShorinCard(c.instanceId, 'deck')
                             }}
                             onMouseEnter={() => hoverCard(c.cardId)}
-                            title="ขึ้นมือ · ค่าร่าย 0 จนจบเทิร์น"
+                            title="ขึ้นมือ"
                           >
                             <CardView instance={c} size="small" />
                           </button>
@@ -1457,7 +1486,7 @@ export function DuelBoard() {
                               pickShorinCard(c.instanceId, 'graveyard')
                             }}
                             onMouseEnter={() => hoverCard(c.cardId)}
-                            title="ขึ้นมือ · ค่าร่าย 0 จนจบเทิร์น"
+                            title="ขึ้นมือ"
                           >
                             <CardView instance={c} size="small" />
                           </button>
@@ -1629,9 +1658,6 @@ export function DuelBoard() {
             <div className="gy-panel">
               <header className="gy-head">
                 <h3>ริวกะ — เลือก「คาถา」จากสุสานขึ้นมือ</h3>
-                <button type="button" className="gy-close" onClick={cancelRyuka}>
-                  ยกเลิก
-                </button>
               </header>
               {(() => {
                 const gyKata = player.graveyard.filter((c) =>

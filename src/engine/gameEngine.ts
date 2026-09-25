@@ -1631,7 +1631,7 @@ function scoutDebuff(state: GameState, ownerId: PlayerId): number {
   return countWarriorsOnField(state)
 }
 
-/** Effective play cost (Shorin override, Dynogr 「คาถา」 discount) */
+/** Effective play cost (temp override, Dynogr 「คาถา」 discount) */
 export function getEffectiveCost(
   card: CardInstance,
   state?: GameState,
@@ -1640,7 +1640,7 @@ export function getEffectiveCost(
   if (card.tempCostOverride !== undefined) return card.tempCostOverride
   let cost = getCard(card.cardId).cost
   if (state && ownerId && isKataSpellOrTrap(card.cardId)) {
-    const discount = countDynogrOnField(state.players[ownerId]) * 2
+    const discount = countDynogrOnField(state.players[ownerId])
     if (discount > 0) cost = Math.max(0, cost - discount)
   }
   return cost
@@ -1735,7 +1735,7 @@ function afterKataActivated(
   let shorinBuffed = 0
   let agathaDrew = 0
   let noahMages = 0
-  let dynogrEnergy = 0
+  let dynogrBuffed = 0
   let sarukaBuffed = 0
   let ryukaSleepMarked = 0
   let field = player.field.map((m) => {
@@ -1746,7 +1746,8 @@ function afterKataActivated(
       next = { ...next, atkMod: (next.atkMod ?? 0) + 2 }
     }
     if (isDynogrCard(m.cardId)) {
-      dynogrEnergy += 1
+      dynogrBuffed += 1
+      next = { ...next, atkMod: (next.atkMod ?? 0) + 1 }
     }
     if (
       isSarukaCard(m.cardId) &&
@@ -1793,15 +1794,15 @@ function afterKataActivated(
   let next: GameState = state
   const fieldChanged =
     shorinBuffed > 0 ||
+    dynogrBuffed > 0 ||
     agathaDrew > 0 ||
     noahMages > 0 ||
     sarukaBuffed > 0 ||
     ryukaSleepMarked > 0
-  if (fieldChanged || dynogrEnergy > 0 || canSleep) {
+  if (fieldChanged || canSleep) {
     player = {
       ...player,
       field: fieldChanged ? field : player.field,
-      energy: player.energy + dynogrEnergy,
       ryukaSleepPending: canSleep ? true : player.ryukaSleepPending,
     }
     next = {
@@ -1824,10 +1825,10 @@ function afterKataActivated(
     )
   }
 
-  if (dynogrEnergy > 0) {
+  if (dynogrBuffed > 0) {
     next = log(
       next,
-      `จอมเวทย์ ไดโนกร — พลังงาน +${dynogrEnergy} จาก「${getCard(activatedCardId).nameTh}」(รวม ${next.players[playerId].energy})`,
+      `จอมเวทย์ ไดโนกร — ATK +1 จาก「${getCard(activatedCardId).nameTh}」(×${dynogrBuffed})`,
     )
   }
 
@@ -3902,11 +3903,12 @@ export function canActivateShorin(
   const mon = player.field[idx]!
   if (!isShorinCard(mon.cardId)) return false
   if (mon.effectUsed) return false
+  if (player.hand.length < 1) return false
 
-  const hasTarget =
+  return (
     player.deck.some((c) => isKataSpellOrTrap(c.cardId)) ||
     player.graveyard.some((c) => isKataSpellOrTrap(c.cardId))
-  return hasTarget
+  )
 }
 
 export function beginShorinSearch(
@@ -3928,28 +3930,35 @@ export function beginShorinSearch(
   const mon = state.players[playerId].field[findFieldIndex(state.players[playerId], sourceId)]!
   let next: GameState = {
     ...state,
-    interaction: { type: 'shorin_search', sourceId, ownerId: playerId },
+    interaction: {
+      type: 'shorin_search',
+      sourceId,
+      ownerId: playerId,
+      step: 'discard',
+    },
     selectedCardId: getCard(mon.cardId).id,
   }
   next = log(
     next,
-    `จอมเวทย์ โชริน — เลือกเวทย์/กับดักที่มี「คาถา」จากเด็คหรือสุสานขึ้นมือ (ค่าร่าย 0 จนจบเทิร์น)`,
+    `จอมเวทย์ โชริน — ทิ้งการ์ดจากมือ 1 ใบ แล้วเลือก「คาถา」จากเด็คหรือสุสานขึ้นมือ`,
   )
   return next
 }
 
 export function cancelShorinSearch(state: GameState): GameState {
   if (state.interaction.type !== 'shorin_search') return state
+  // Only cancel before paying the discard
+  if (state.interaction.step !== 'discard') return state
   return { ...state, interaction: { type: 'idle' } }
 }
 
-export function pickShorinSearch(
+export function pickShorinDiscard(
   state: GameState,
   playerId: PlayerId,
-  instanceId: string,
-  from: 'deck' | 'graveyard',
+  handInstanceId: string,
 ): GameState {
   if (state.interaction.type !== 'shorin_search') return state
+  if (state.interaction.step !== 'discard') return state
   if (state.interaction.ownerId !== playerId) return state
   if (state.activePlayer !== playerId) return state
 
@@ -3959,6 +3968,68 @@ export function pickShorinSearch(
   if (sourceIdx < 0) return state
   const source = player.field[sourceIdx]!
   if (!isShorinCard(source.cardId) || source.effectUsed) return state
+
+  const handIdx = findHandIndex(player, handInstanceId)
+  if (handIdx < 0) return state
+  const discarded = player.hand[handIdx]
+  const hand = [...player.hand]
+  hand.splice(handIdx, 1)
+  const field = [...player.field]
+  field[sourceIdx] = { ...source, effectUsed: true }
+  player = {
+    ...player,
+    hand,
+    field,
+    graveyard: [...player.graveyard, { ...discarded, faceDown: false }],
+  }
+
+  const stillHasKata =
+    player.deck.some((c) => isKataSpellOrTrap(c.cardId)) ||
+    player.graveyard.some((c) => isKataSpellOrTrap(c.cardId))
+
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: player },
+    selectedCardId: getCard(discarded.cardId).id,
+  }
+  next = log(next, `โชรินทิ้ง ${getCard(discarded.cardId).nameTh}`)
+
+  if (!stillHasKata) {
+    next = { ...next, interaction: { type: 'idle' } }
+    next = log(next, `โชริน — ไม่มี「คาถา」ในเด็ค/สุสาน`)
+    return next
+  }
+
+  next = {
+    ...next,
+    interaction: {
+      type: 'shorin_search',
+      sourceId,
+      ownerId: playerId,
+      step: 'fetch',
+    },
+  }
+  next = log(next, `โชริน — เลือก「คาถา」จากเด็คหรือสุสานขึ้นมือ`)
+  return next
+}
+
+export function pickShorinSearch(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+  from: 'deck' | 'graveyard',
+): GameState {
+  if (state.interaction.type !== 'shorin_search') return state
+  if (state.interaction.step !== 'fetch') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+
+  const { sourceId } = state.interaction
+  let player = { ...state.players[playerId] }
+  const sourceIdx = findFieldIndex(player, sourceId)
+  if (sourceIdx < 0) return state
+  const source = player.field[sourceIdx]!
+  if (!isShorinCard(source.cardId)) return state
 
   let fetched: CardInstance | null = null
   if (from === 'deck') {
@@ -3982,13 +4053,9 @@ export function pickShorinSearch(
   const toHand: CardInstance = {
     ...fetched,
     faceDown: false,
-    tempCostOverride: 0,
   }
-  const field = [...player.field]
-  field[sourceIdx] = { ...source, effectUsed: true }
   player = {
     ...player,
-    field,
     hand: [...player.hand, toHand],
   }
 
@@ -4001,7 +4068,7 @@ export function pickShorinSearch(
   }
   next = log(
     next,
-    `โชรินนำ ${def.nameTh} จาก${from === 'deck' ? 'เด็ค' : 'สุสาน'}ขึ้นมือ — ค่าร่าย 0 จนจบเทิร์น`,
+    `โชรินนำ ${def.nameTh} จาก${from === 'deck' ? 'เด็ค' : 'สุสาน'}ขึ้นมือ`,
   )
   return enforceHandLimit(next, playerId)
 }
@@ -4208,6 +4275,7 @@ export function canActivateRyuka(
   const mon = player.field[idx]!
   if (!isRyukaCard(mon.cardId)) return false
   if (mon.effectUsed) return false
+  if (player.hand.length < 2) return false
   return player.graveyard.some((c) => isKataSpellOrTrap(c.cardId))
 }
 
@@ -4233,19 +4301,108 @@ export function beginRyukaFetch(
     ]!
   let next: GameState = {
     ...state,
-    interaction: { type: 'ryuka_fetch', sourceId, ownerId: playerId },
+    interaction: {
+      type: 'ryuka_fetch',
+      sourceId,
+      ownerId: playerId,
+      step: 'discard',
+      discardLeft: 2,
+    },
     selectedCardId: getCard(mon.cardId).id,
   }
   next = log(
     next,
-    `จอมเวทย์ ริวกะ — เลือก「คาถา」จากสุสานขึ้นมือ (เปิดใช้ชื่อเดียวกันเทิร์นนี้ทำผล 2 รอบ)`,
+    `จอมเวทย์ ริวกะ — ทิ้งการ์ดจากมือ 2 ใบ แล้วเลือก「คาถา」จากสุสานขึ้นมือ`,
   )
   return next
 }
 
 export function cancelRyukaFetch(state: GameState): GameState {
   if (state.interaction.type !== 'ryuka_fetch') return state
+  // Only cancel before any discard is paid
+  if (state.interaction.step !== 'discard') return state
+  if ((state.interaction.discardLeft ?? 0) < 2) return state
   return { ...state, interaction: { type: 'idle' } }
+}
+
+export function pickRyukaDiscard(
+  state: GameState,
+  playerId: PlayerId,
+  handInstanceId: string,
+): GameState {
+  if (state.interaction.type !== 'ryuka_fetch') return state
+  if (state.interaction.step !== 'discard') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+
+  const { sourceId } = state.interaction
+  let discardLeft = state.interaction.discardLeft ?? 0
+  if (discardLeft <= 0) return state
+
+  let player = { ...state.players[playerId] }
+  const sourceIdx = findFieldIndex(player, sourceId)
+  if (sourceIdx < 0) return state
+  const source = player.field[sourceIdx]!
+  if (!isRyukaCard(source.cardId)) return state
+
+  const handIdx = findHandIndex(player, handInstanceId)
+  if (handIdx < 0) return state
+  const discarded = player.hand[handIdx]
+  const hand = [...player.hand]
+  hand.splice(handIdx, 1)
+  const field = [...player.field]
+  // Mark OPT used on first discard so the activation is committed
+  field[sourceIdx] = { ...source, effectUsed: true }
+  player = {
+    ...player,
+    hand,
+    field,
+    graveyard: [...player.graveyard, { ...discarded, faceDown: false }],
+  }
+  discardLeft -= 1
+
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: player },
+    selectedCardId: getCard(discarded.cardId).id,
+  }
+  next = log(
+    next,
+    `ริวกะทิ้ง ${getCard(discarded.cardId).nameTh} (เหลือทิ้ง ${discardLeft})`,
+  )
+
+  if (discardLeft > 0) {
+    next = {
+      ...next,
+      interaction: {
+        type: 'ryuka_fetch',
+        sourceId,
+        ownerId: playerId,
+        step: 'discard',
+        discardLeft,
+      },
+    }
+    return next
+  }
+
+  const stillHasKata = player.graveyard.some((c) => isKataSpellOrTrap(c.cardId))
+  if (!stillHasKata) {
+    next = { ...next, interaction: { type: 'idle' } }
+    next = log(next, `ริวกะ — ไม่มี「คาถา」ในสุสาน`)
+    return next
+  }
+
+  next = {
+    ...next,
+    interaction: {
+      type: 'ryuka_fetch',
+      sourceId,
+      ownerId: playerId,
+      step: 'fetch',
+    },
+  }
+  next = log(next, `ริวกะ — เลือก「คาถา」จากสุสานขึ้นมือ`)
+  return next
 }
 
 export function pickRyukaFetch(
@@ -4254,6 +4411,7 @@ export function pickRyukaFetch(
   instanceId: string,
 ): GameState {
   if (state.interaction.type !== 'ryuka_fetch') return state
+  if (state.interaction.step !== 'fetch') return state
   if (state.interaction.ownerId !== playerId) return state
   if (state.activePlayer !== playerId) return state
 
@@ -4262,7 +4420,7 @@ export function pickRyukaFetch(
   const sourceIdx = findFieldIndex(player, sourceId)
   if (sourceIdx < 0) return state
   const source = player.field[sourceIdx]!
-  if (!isRyukaCard(source.cardId) || source.effectUsed) return state
+  if (!isRyukaCard(source.cardId)) return state
 
   const gyIdx = player.graveyard.findIndex((c) => c.instanceId === instanceId)
   if (gyIdx < 0) return state
@@ -4273,15 +4431,12 @@ export function pickRyukaFetch(
   graveyard.splice(gyIdx, 1)
   const toHand: CardInstance = { ...fetched, faceDown: false }
   const def = getCard(toHand.cardId)
-  const field = [...player.field]
-  field[sourceIdx] = { ...source, effectUsed: true }
   const echoNames = [...(player.ryukaEchoNames ?? [])]
   if (!echoNames.includes(def.nameTh)) echoNames.push(def.nameTh)
 
   player = {
     ...player,
     graveyard,
-    field,
     hand: [...player.hand, toHand],
     ryukaEchoNames: echoNames,
   }
@@ -4978,17 +5133,15 @@ export function pickBuddyTarget(
   const combined = atkA + atkB
 
   const field = [...player.field]
-  const baseA = getCard(first.cardId).atk ?? 0
-  const baseB = getCard(target.cardId).atk ?? 0
+  const nonTempA = atkA - (first.tempAtkMod ?? 0)
+  const nonTempB = atkB - (target.tempAtkMod ?? 0)
   field[firstIdx] = {
     ...first,
-    atkMod: combined - baseA,
-    tempAtkMod: undefined,
+    tempAtkMod: combined - nonTempA,
   }
   field[mIdx] = {
     ...target,
-    atkMod: combined - baseB,
-    tempAtkMod: undefined,
+    tempAtkMod: combined - nonTempB,
   }
 
   let nextPlayer: PlayerState = { ...player, field }
@@ -5005,7 +5158,7 @@ export function pickBuddyTarget(
   }
   next = log(
     next,
-    `${finished.spellNote} — ${nameA} (${atkA}) + ${nameB} (${atkB}) = ${combined} · ทั้งสองตัว ATK เป็น ${combined}`,
+    `${finished.spellNote} — ${nameA} (${atkA}) + ${nameB} (${atkB}) = ${combined} · ทั้งสองตัว ATK เป็น ${combined} จนจบเทิร์น`,
   )
   return settleAfterKataResolution(next, playerId)
 }

@@ -71,9 +71,11 @@ import {
   isAlkataGod,
   pickSoluyBounce,
   pickShorinSearch,
+  pickShorinDiscard,
   pickSarukaDiscard,
   pickSarukaSearch,
   pickRyukaFetch,
+  pickRyukaDiscard,
   pickRyukaSleep,
   pickAgathaSearch,
   pickNoahMill,
@@ -170,11 +172,13 @@ interface AppStore {
   pickMinaCard: (instanceId: string) => void
   skipMina: () => void
   cancelSoluy: () => void
+  pickShorinDiscardCard: (instanceId: string) => void
   pickShorinCard: (instanceId: string, from: 'deck' | 'graveyard') => void
   cancelShorin: () => void
   pickSarukaDiscardCard: (instanceId: string) => void
   pickSarukaCard: (instanceId: string, from: 'deck' | 'graveyard') => void
   cancelSaruka: () => void
+  pickRyukaDiscardCard: (instanceId: string) => void
   pickRyukaCard: (instanceId: string) => void
   cancelRyuka: () => void
   pickRyukaSleepMonster: (instanceId: string) => void
@@ -659,6 +663,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ game: cancelSoluySwap(game) })
   },
 
+  pickShorinDiscardCard: (instanceId) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickShorinDiscard(game, 'player', instanceId)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
   pickShorinCard: (instanceId, from) => {
     const { game } = get()
     if (!game) return
@@ -693,6 +705,14 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const { game } = get()
     if (!game || game.interaction.type !== 'saruka_search') return
     set({ game: cancelSarukaSearch(game) })
+  },
+
+  pickRyukaDiscardCard: (instanceId) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickRyukaDiscard(game, 'player', instanceId)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
   },
 
   pickRyukaCard: (instanceId) => {
@@ -1138,6 +1158,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const next = discardForSara(game, 'player', instanceId)
       set({ game: next })
       if (next.interaction.type === 'mina_recruit' || next.interaction.type === 'sara_discard' || next.interaction.type === 'omega_search' || next.interaction.type === 'alkata_deck_search' || next.interaction.type === 'alkata_mina_summon' || next.interaction.type === 'sora_destroy' || next.interaction.type === 'alkata_debuff') return
+      if (next.interaction.type === 'idle') afterPlayerMove(get)
+      return
+    }
+
+    if (
+      game.interaction.type === 'ryuka_fetch' &&
+      game.interaction.step === 'discard' &&
+      game.interaction.ownerId === 'player'
+    ) {
+      const next = pickRyukaDiscard(game, 'player', instanceId)
+      set({ game: next })
+      if (next.interaction.type === 'idle') afterPlayerMove(get)
+      return
+    }
+
+    if (
+      game.interaction.type === 'shorin_search' &&
+      game.interaction.step === 'discard' &&
+      game.interaction.ownerId === 'player'
+    ) {
+      const next = pickShorinDiscard(game, 'player', instanceId)
+      set({ game: next })
       if (next.interaction.type === 'idle') afterPlayerMove(get)
       return
     }

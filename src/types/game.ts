@@ -275,8 +275,13 @@ export type InteractionMode =
       sourceId: string
       bounceId?: string
     }
-  /** Shorin — pick a 「คาถา」 spell/trap from deck or GY to hand (cost 0 EOT) */
-  | { type: 'shorin_search'; sourceId: string; ownerId: PlayerId }
+  /** Shorin — discard 1, then fetch 「คาถา」 from deck or GY */
+  | {
+      type: 'shorin_search'
+      sourceId: string
+      ownerId: PlayerId
+      step: 'discard' | 'fetch'
+    }
   /** Saruka — discard 1, then fetch 「คาถา」 from deck or GY */
   | {
       type: 'saruka_search'
@@ -284,8 +289,15 @@ export type InteractionMode =
       ownerId: PlayerId
       step: 'discard' | 'fetch'
     }
-  /** Ryuka — fetch 「คาถา」 from GY to hand (echo double this turn) */
-  | { type: 'ryuka_fetch'; sourceId: string; ownerId: PlayerId }
+  /** Ryuka — discard 2, then fetch 「คาถา」 from GY (echo double this turn) */
+  | {
+      type: 'ryuka_fetch'
+      sourceId: string
+      ownerId: PlayerId
+      step: 'discard' | 'fetch'
+      /** Remaining discards while step === 'discard' */
+      discardLeft?: number
+    }
   /** Ryuka — put an opponent monster to sleep until their EOT */
   | { type: 'ryuka_sleep'; ownerId: PlayerId }
   /** Agatha — recycle คาถา from GY to deck, then fetch คาถา from deck; buff mages */

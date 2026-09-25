@@ -26,9 +26,11 @@ import {
   isEnergyOrHpSummon,
   isKataSpellOrTrap,
   pickShorinSearch,
+  pickShorinDiscard,
   pickSarukaDiscard,
   pickSarukaSearch,
   pickRyukaFetch,
+  pickRyukaDiscard,
   pickRyukaSleep,
   pickAgathaSearch,
   pickNoahMill,
@@ -689,6 +691,21 @@ export function chooseAiAction(state: GameState): AiChoice | null {
     state.interaction.ownerId === AI
   ) {
     const me = state.players[AI]
+    if (state.interaction.step === 'discard') {
+      const ranked = [...me.hand].sort((a, b) => {
+        const da = getCard(a.cardId)
+        const db = getCard(b.cardId)
+        const kataA = isKataSpellOrTrap(a.cardId) ? 1 : 0
+        const kataB = isKataSpellOrTrap(b.cardId) ? 1 : 0
+        if (kataA !== kataB) return kataA - kataB
+        return da.cost - db.cost
+      })
+      const discard = ranked[0]
+      if (!discard) return null
+      return {
+        apply: (s) => pickShorinDiscard(s, AI, discard.instanceId),
+      }
+    }
     const deckPick = me.deck.find((c) => isKataSpellOrTrap(c.cardId))
     if (deckPick) {
       return {
@@ -748,6 +765,21 @@ export function chooseAiAction(state: GameState): AiChoice | null {
     state.interaction.ownerId === AI
   ) {
     const me = state.players[AI]
+    if (state.interaction.step === 'discard') {
+      const ranked = [...me.hand].sort((a, b) => {
+        const da = getCard(a.cardId)
+        const db = getCard(b.cardId)
+        const kataA = isKataSpellOrTrap(a.cardId) ? 1 : 0
+        const kataB = isKataSpellOrTrap(b.cardId) ? 1 : 0
+        if (kataA !== kataB) return kataA - kataB
+        return da.cost - db.cost
+      })
+      const discard = ranked[0]
+      if (!discard) return null
+      return {
+        apply: (s) => pickRyukaDiscard(s, AI, discard.instanceId),
+      }
+    }
     const gyPick = me.graveyard.find((c) => isKataSpellOrTrap(c.cardId))
     if (!gyPick) return null
     return {
