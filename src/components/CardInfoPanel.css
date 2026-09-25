@@ -1,0 +1,301 @@
+.info-panel {
+  width: 320px;
+  min-width: 300px;
+  height: 100%;
+  background: linear-gradient(180deg, rgba(12, 18, 28, 0.92), rgba(8, 12, 20, 0.96));
+  border-right: 1px solid rgba(120, 160, 200, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  backdrop-filter: blur(8px);
+}
+
+.info-panel.empty {
+  align-items: center;
+  justify-content: center;
+}
+
+.info-placeholder {
+  color: #6a7a8a;
+  font-size: 15px;
+  padding: 24px;
+  text-align: center;
+}
+
+.info-card-preview {
+  display: flex;
+  justify-content: center;
+  padding: 18px 14px 10px;
+  background:
+    radial-gradient(ellipse at 50% 30%, rgba(60, 90, 120, 0.25), transparent 65%),
+    #060a10;
+}
+
+.info-card-preview .card-shell {
+  pointer-events: none;
+  /* enlarge preview card beyond base preview size */
+  --s: 1.12;
+  width: calc(var(--bw) * var(--s));
+  height: calc(var(--bh) * var(--s));
+}
+
+.info-card-preview .card-shell.size-preview {
+  --s: 1.12;
+}
+
+.info-card-preview .card-shell:hover {
+  transform: none;
+}
+
+.info-body {
+  padding: 12px 18px 22px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.info-code {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #7ec8ff;
+  font-variant-numeric: tabular-nums;
+}
+
+.info-name {
+  margin: 0;
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: 30px;
+  font-weight: 700;
+  color: #f4f0e6;
+  line-height: 1.15;
+}
+
+.info-name-en {
+  margin: 4px 0 6px;
+  color: #8a9aab;
+  font-size: 14px;
+}
+
+.info-rarity {
+  margin: 0 0 14px;
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.info-rarity.rarity-C {
+  color: #d0d8e0;
+  background: rgba(100, 110, 120, 0.4);
+}
+
+.info-rarity.rarity-R {
+  color: #b8f0cc;
+  background: rgba(40, 120, 70, 0.4);
+}
+
+.info-rarity.rarity-SR {
+  color: #b8e0ff;
+  background: rgba(40, 100, 180, 0.45);
+}
+
+.info-rarity.rarity-UR {
+  color: #ffe9a8;
+  background: rgba(160, 100, 20, 0.45);
+}
+
+.info-icon-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.icon-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  padding: 12px 6px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.icon-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #9aabbc;
+}
+
+.icon-label .gicon {
+  width: 14px;
+  height: 14px;
+}
+
+.atk-big {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #ffd27a;
+  font-size: 34px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.info-atk-mods {
+  margin: -4px 0 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 210, 122, 0.06);
+  border: 1px solid rgba(255, 210, 122, 0.18);
+}
+
+.info-atk-mods-title {
+  margin: 0 0 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9aabbc;
+}
+
+.info-atk-mods ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.info-atk-mods li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  color: #c5d0da;
+}
+
+.info-atk-mods li.buff b {
+  color: #7dffb3;
+}
+
+.info-atk-mods li.debuff b {
+  color: #ff8a8a;
+}
+
+.info-atk-total {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  color: #9aabbc;
+  display: flex;
+  justify-content: space-between;
+}
+
+.info-atk-total strong {
+  color: #ffd27a;
+  font-size: 16px;
+}
+
+.atk-big .gicon {
+  width: 22px;
+  height: 22px;
+}
+
+.info-type-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #c5d0da;
+}
+
+.info-type-line .gicon {
+  width: 18px;
+  height: 18px;
+  color: #e2c07a;
+}
+
+.info-type-line .dot {
+  opacity: 0.4;
+}
+
+.info-desc h3,
+.icon-legend h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #6a7a8a;
+}
+
+.info-desc p {
+  margin: 0 0 14px;
+  font-size: 15px;
+  line-height: 1.55;
+  color: #d0d8e0;
+  white-space: pre-line;
+}
+
+.icon-legend ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.icon-legend li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: #9aabbc;
+}
+
+.icon-legend code {
+  font-size: 10px;
+  color: #7ec8ff;
+  background: rgba(126, 200, 255, 0.1);
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+
+.legend-atk {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: #ffd27a;
+  font-weight: 800;
+  font-size: 14px;
+  min-width: 28px;
+}
+
+.legend-atk .gicon {
+  width: 12px;
+  height: 12px;
+}
+
+.info-panel.type-spell .info-name {
+  color: #9fd4c8;
+}
+
+.info-panel.type-trap .info-name {
+  color: #e0a0c4;
+}
+
+/* Legacy compact — unused in duel now, keep for safety */
+.info-panel.compact {
+  width: 240px;
+  min-width: 220px;
+}

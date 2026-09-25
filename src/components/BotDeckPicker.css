@@ -1,0 +1,75 @@
+.bot-deck-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 180px;
+}
+
+.bot-deck-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8a9aab;
+}
+
+.bot-deck-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bot-deck-dropdown {
+  flex: 1;
+  min-width: 0;
+}
+
+.bot-deck-dropdown .cd-trigger {
+  width: 100%;
+  justify-content: space-between;
+  border-color: rgba(255, 255, 255, 0.15);
+  background: #15202c;
+  color: #e8eef4;
+  padding: 8px 10px;
+  border-radius: 6px;
+}
+
+.bot-deck-dropdown .cd-trigger:hover {
+  background: #1a2836;
+  border-color: rgba(212, 181, 106, 0.35);
+}
+
+.bot-deck-dropdown .cd-trigger-label {
+  max-width: none;
+  flex: 1;
+  text-align: left;
+}
+
+.bot-deck-status {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.bot-deck-status.ok {
+  color: #7ec8a0;
+  background: rgba(80, 160, 120, 0.12);
+  border-color: rgba(80, 160, 120, 0.28);
+}
+
+.bot-deck-status.bad {
+  color: #ff8a8a;
+  background: rgba(180, 60, 60, 0.14);
+  border-color: rgba(200, 80, 80, 0.3);
+}
+
+.bot-deck-hint {
+  margin: 0;
+  font-size: 11px;
+  color: #8a9aab;
+  max-width: 240px;
+  line-height: 1.35;
+}

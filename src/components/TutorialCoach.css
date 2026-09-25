@@ -1,0 +1,221 @@
+.coach-root {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+}
+
+.coach-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 8, 6, 0.45);
+  pointer-events: none;
+}
+
+.coach-dim.soft {
+  background: rgba(4, 8, 6, 0.28);
+}
+
+.coach-spotlight {
+  position: fixed;
+  border: 2px solid #d4b56a;
+  border-radius: 12px;
+  box-shadow:
+    0 0 0 9999px rgba(4, 8, 6, 0.42),
+    0 0 28px rgba(212, 181, 106, 0.45);
+  pointer-events: none;
+  transition:
+    left 0.35s ease,
+    top 0.35s ease,
+    width 0.35s ease,
+    height 0.35s ease;
+  z-index: 1;
+}
+
+.coach-spotlight.pulse {
+  animation: coach-spot-pulse 1.15s ease-in-out infinite;
+}
+
+@keyframes coach-spot-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 9999px rgba(4, 8, 6, 0.42),
+      0 0 20px rgba(212, 181, 106, 0.35);
+  }
+  50% {
+    box-shadow:
+      0 0 0 9999px rgba(4, 8, 6, 0.34),
+      0 0 36px rgba(240, 208, 128, 0.7);
+  }
+}
+
+.coach-tip {
+  position: fixed;
+  z-index: 2;
+  pointer-events: auto;
+  width: min(300px, calc(100vw - 24px));
+  padding: 12px 14px 10px;
+  border-radius: 10px;
+  background: linear-gradient(165deg, rgba(22, 32, 26, 0.98), rgba(10, 14, 12, 0.98));
+  border: 1px solid rgba(212, 181, 106, 0.4);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  color: #e8efe6;
+}
+
+/* Parked dock — only two stable corners, smooth swap */
+.coach-tip.fixed-dock {
+  transition:
+    top 0.35s ease,
+    bottom 0.35s ease,
+    left 0.35s ease;
+}
+
+.coach-tip.dock-bottom-left {
+  left: 14px;
+  bottom: 14px;
+  top: auto;
+  right: auto;
+}
+
+.coach-tip.dock-top-left {
+  left: 14px;
+  top: 64px;
+  bottom: auto;
+  right: auto;
+}
+
+.coach-tip.waiting h3 {
+  font-size: 18px;
+}
+
+.coach-tip.waiting p {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.coach-tip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.coach-eyebrow {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #d4b56a;
+}
+
+.coach-progress {
+  font-size: 11px;
+  font-weight: 700;
+  color: #7a9084;
+}
+
+.coach-tip h3 {
+  margin: 0 0 8px;
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-size: 22px;
+  font-weight: 700;
+  color: #f0d080;
+  line-height: 1.15;
+}
+
+.coach-tip p {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.55;
+  color: #9bb0a0;
+}
+
+.coach-detail {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.coach-detail li {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #c5d4c8;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.coach-detail li:last-child {
+  border-bottom: none;
+}
+
+.coach-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.coach-btn {
+  appearance: none;
+  border: none;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 9px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.coach-btn.primary {
+  flex: 1;
+  background: linear-gradient(180deg, #e6c878, #8a6a28);
+  color: #1a1408;
+}
+
+.coach-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.coach-btn.primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  filter: grayscale(0.25);
+}
+
+.coach-btn.ghost {
+  background: transparent;
+  color: #b8cfc0;
+  border: 1px solid rgba(200, 220, 200, 0.25);
+}
+
+.coach-btn.ghost:hover {
+  border-color: rgba(212, 181, 106, 0.45);
+  color: #d4b56a;
+}
+
+.coach-reopen {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 90;
+  appearance: none;
+  border: 1px solid rgba(212, 181, 106, 0.45);
+  background: rgba(12, 20, 16, 0.92);
+  color: #d4b56a;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.coach-reopen:hover {
+  background: rgba(212, 181, 106, 0.12);
+}
