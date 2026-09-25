@@ -26,6 +26,7 @@ import { useAppStore } from '../store/gameStore'
 import { PHASE_LABELS, type Phase } from '../types/game'
 import { CardInfoPanel } from './CardInfoPanel'
 import { CardView } from './CardView'
+import { AtkIcon } from './GameIcons'
 import { TutorialCoach } from './TutorialCoach'
 import './DuelBoard.css'
 
@@ -57,6 +58,15 @@ function phaseStatus(
 function centerOf(el: HTMLElement) {
   const r = el.getBoundingClientRect()
   return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+}
+
+function ZoneAtkBadge({ atk }: { atk: number }) {
+  return (
+    <span className="zone-atk" title={`ATK ${atk}`} aria-label={`ATK ${atk}`}>
+      <AtkIcon />
+      <b>{atk}</b>
+    </span>
+  )
 }
 
 function SideResources({
@@ -856,52 +866,62 @@ export function DuelBoard() {
                     ref={(el) => setZoneRef(m?.instanceId, el)}
                   >
                     {m ? (
-                      <CardView
-                        instance={m}
-                        className={m.battleShieldUntil ? 'battle-shield' : ''}
-                        size="tiny"
-                        exhausted={!!m.hasAttacked || !!m.asleepUntil}
-                        atkDisplay={getEffectiveAtk(
-                          game,
-                          'opponent',
-                          m.cardId,
-                          m.instanceId,
-                        )}
-                        effectSource={isEffectSource(m.instanceId)}
-                        selected={
-                          (attacking !== null &&
-                            !m.hasAttacked &&
-                            !protectedTarget) ||
-                          betaExtraDestroy ||
-                          soraDestroying ||
-                          alkataDebuffing ||
-                          ryukaSleeping ||
-                          zeekaDebuffing ||
-                          (hypnosisPicking && m.instanceId !== hypnosisFirstId) ||
-                          hypnosisFirstId === m.instanceId
-                        }
-                        dimmed={
-                          protectedTarget ||
-                          (hypnosisPicking && m.instanceId === hypnosisFirstId)
-                        }
-                        fx={
-                          battleFx?.attackerId === m.instanceId && lungeOffset
-                            ? 'lunge'
-                            : battleFx?.targetId === m.instanceId
-                              ? 'hit'
-                              : null
-                        }
-                        fxOffset={
-                          battleFx?.attackerId === m.instanceId
-                            ? lungeOffset ?? undefined
-                            : undefined
-                        }
-                        onClick={() => {
-                          hoverCard(m.cardId)
-                          onMonsterClick(m.instanceId, 'opponent')
-                        }}
-                        onMouseEnter={() => hoverCard(m.cardId)}
-                      />
+                      <>
+                        <CardView
+                          instance={m}
+                          className={m.battleShieldUntil ? 'battle-shield' : ''}
+                          size="tiny"
+                          exhausted={!!m.hasAttacked || !!m.asleepUntil}
+                          atkDisplay={getEffectiveAtk(
+                            game,
+                            'opponent',
+                            m.cardId,
+                            m.instanceId,
+                          )}
+                          effectSource={isEffectSource(m.instanceId)}
+                          selected={
+                            (attacking !== null &&
+                              !m.hasAttacked &&
+                              !protectedTarget) ||
+                            betaExtraDestroy ||
+                            soraDestroying ||
+                            alkataDebuffing ||
+                            ryukaSleeping ||
+                            zeekaDebuffing ||
+                            (hypnosisPicking && m.instanceId !== hypnosisFirstId) ||
+                            hypnosisFirstId === m.instanceId
+                          }
+                          dimmed={
+                            protectedTarget ||
+                            (hypnosisPicking && m.instanceId === hypnosisFirstId)
+                          }
+                          fx={
+                            battleFx?.attackerId === m.instanceId && lungeOffset
+                              ? 'lunge'
+                              : battleFx?.targetId === m.instanceId
+                                ? 'hit'
+                                : null
+                          }
+                          fxOffset={
+                            battleFx?.attackerId === m.instanceId
+                              ? lungeOffset ?? undefined
+                              : undefined
+                          }
+                          onClick={() => {
+                            hoverCard(m.cardId)
+                            onMonsterClick(m.instanceId, 'opponent')
+                          }}
+                          onMouseEnter={() => hoverCard(m.cardId)}
+                        />
+                        <ZoneAtkBadge
+                          atk={getEffectiveAtk(
+                            game,
+                            'opponent',
+                            m.cardId,
+                            m.instanceId,
+                          )}
+                        />
+                      </>
                     ) : null}
                   </div>
                   )
@@ -989,6 +1009,7 @@ export function DuelBoard() {
                     }}
                   >
                     {m ? (
+                      <>
                       <CardView
                         instance={m}
                         className={m.battleShieldUntil ? 'battle-shield' : ''}
@@ -1061,6 +1082,15 @@ export function DuelBoard() {
                         }}
                         onMouseEnter={() => hoverCard(m.cardId)}
                       />
+                      <ZoneAtkBadge
+                        atk={getEffectiveAtk(
+                          game,
+                          'player',
+                          m.cardId,
+                          m.instanceId,
+                        )}
+                      />
+                    </>
                     ) : null}
                   </div>
                   )
