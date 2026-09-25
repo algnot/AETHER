@@ -62,6 +62,28 @@ export async function apiGachaOpen(token: string, boxId: string) {
     cards: GachaPullCard[]
     cost: number
     packIndex: number
+    autoReboxed?: boolean
+    openedReboxCount?: number
+    progress: BoxProgressView
+    user: AuthUser
+  }>(res)
+}
+
+export async function apiGachaOpenAll(token: string, boxId: string) {
+  const res = await fetch(`/api/gacha/boxes/${boxId}/open-all`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  })
+  return parseJson<{
+    packs: {
+      packIndex: number
+      reboxCount: number
+      cards: GachaPullCard[]
+      cost: number
+    }[]
+    packsOpened: number
+    totalCost: number
+    autoReboxed?: boolean
     progress: BoxProgressView
     user: AuthUser
   }>(res)

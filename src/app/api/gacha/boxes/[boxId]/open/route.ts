@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { jsonError, userIdFromRequest } from '@/lib/auth'
 import { connectDb } from '@/lib/db'
 import { getGachaBox, remainingInBox } from '@/data/gachaBoxes'
-import { openPack } from '@/lib/gacha'
+import { openPack, reboxProgress } from '@/lib/gacha'
 import {
   addToInventory,
   getBoxProgress,
@@ -25,10 +25,11 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     const user = await User.findById(userId)
     if (!user) return jsonError('ไม่พบผู้ใช้', 401)
 
-    const progress = getBoxProgress(user, box.id)
-    const rem = remainingInBox(box, progress)
-    if (rem.isEmpty) {
-      return jsonError('กล่องนี้เปิดครบแล้ว — กด Rebox เพื่อเริ่มกล่องใหม่', 409)
+    let progress = getBoxProgress(user, box.id)
+    // Stale empty box (e.g. older clients) — start a new box before opening
+    if (remainingInBox(box, progress).isEmpty) {
+      progress = reboxProgress(progress)
+      setBoxProgress(user, box.id, progress)
     }
 
     const cost = box.packCost
@@ -47,8 +48,17 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       throw e
     }
 
+    const packIndex = result.progress.packsOpened
+    const historyReboxCount = result.progress.reboxCount
+    let savedProgress = result.progress
+    let autoReboxed = false
+    if (remainingInBox(box, result.progress).isEmpty) {
+      savedProgress = reboxProgress(result.progress)
+      autoReboxed = true
+    }
+
     user.coins = (user.coins ?? 0) - cost
-    setBoxProgress(user, box.id, result.progress)
+    setBoxProgress(user, box.id, savedProgress)
     for (const c of result.cards) {
       addToInventory(user, c.cardId, 1)
     }
@@ -57,8 +67,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
       boxId: box.id,
       at: new Date(),
       cost,
-      packIndex: result.progress.packsOpened,
-      reboxCount: result.progress.reboxCount,
+      packIndex,
+      reboxCount: historyReboxCount,
       cards: result.cards,
     }
     const history = user.gachaHistory ?? []
@@ -72,8 +82,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     return NextResponse.json({
       cards: result.cards,
       cost,
-      packIndex: result.progress.packsOpened,
-      progress: remainingInBox(box, result.progress),
+      packIndex,
+      autoReboxed,
+      openedReboxCount: historyReboxCount,
+      progress: remainingInBox(box, savedProgress),
       user: user.toPublic(),
     })
   } catch (err) {

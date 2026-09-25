@@ -6,6 +6,7 @@ import {
   apiGachaBox,
   apiGachaHistory,
   apiGachaOpen,
+  apiGachaOpenAll,
   apiGachaRebox,
   type BoxProgressView,
   type GachaBoxView,
@@ -31,7 +32,15 @@ type PullPhase =
   | 'ready'
   | 'flipping'
   | 'done'
+  | 'bulk'
 type SlideDir = 'prev' | 'next' | null
+
+type BulkPackResult = {
+  packIndex: number
+  reboxCount: number
+  cards: GachaPullCard[]
+  cost: number
+}
 
 function wait(ms: number) {
   return new Promise<void>((resolve) => {
@@ -73,6 +82,8 @@ export function GachaScreen() {
 
   const [phase, setPhase] = useState<PullPhase>('idle')
   const [pullCards, setPullCards] = useState<GachaPullCard[] | null>(null)
+  const [bulkPacks, setBulkPacks] = useState<BulkPackResult[] | null>(null)
+  const [bulkCost, setBulkCost] = useState(0)
   const [flipped, setFlipped] = useState<boolean[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
   const [burst, setBurst] = useState<Rarity | null>(null)
@@ -171,6 +182,8 @@ export function GachaScreen() {
   const resetPullStage = () => {
     setPhase('idle')
     setPullCards(null)
+    setBulkPacks(null)
+    setBulkCost(0)
     setFlipped([])
     setActiveIndex(0)
     setBurst(null)
@@ -239,10 +252,13 @@ export function GachaScreen() {
     if (!token || busy) return
     if (phase === 'buying' || phase === 'tearing' || phase === 'flipping') return
     if (phase === 'ready') return
+    if (phase === 'bulk') return
     if (phase === 'done' && !opts?.continueAfterDone) return
 
     if (phase === 'done') {
       setPullCards(null)
+      setBulkPacks(null)
+      setBulkCost(0)
       setFlipped([])
       setActiveIndex(0)
       setBurst(null)
@@ -267,7 +283,7 @@ export function GachaScreen() {
             at: new Date().toISOString(),
             cost: res.cost,
             packIndex: res.packIndex,
-            reboxCount: res.progress.reboxCount,
+            reboxCount: res.openedReboxCount ?? res.progress.reboxCount,
             cards: res.cards,
           },
           ...prev,
@@ -275,6 +291,7 @@ export function GachaScreen() {
       )
       if (box) setBox({ ...box, progress: res.progress })
 
+      setBulkPacks(null)
       setPullCards(res.cards)
       setFlipped(res.cards.map(() => false))
       setActiveIndex(0)
@@ -283,6 +300,59 @@ export function GachaScreen() {
       setPhase('ready')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'เปิดซองไม่สำเร็จ')
+      setPhase('idle')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const onOpenAll = async () => {
+    if (!token || busy || phase !== 'idle') return
+    const packsLeft = progress?.packsLeft ?? 0
+    if (packsLeft <= 0) return
+    const cost = packsLeft * (box?.packCost ?? 20)
+    if (coins < cost) {
+      setError(`เหรียญไม่พอ (ต้องการ ${cost.toLocaleString('th-TH')} สำหรับ ${packsLeft} ซอง)`)
+      return
+    }
+    if (
+      !window.confirm(
+        `เปิดซองที่เหลือทั้งหมด ${packsLeft} ซอง (−${cost.toLocaleString('th-TH')} เหรียญ)?`,
+      )
+    ) {
+      return
+    }
+
+    setBusy(true)
+    setError(null)
+    setPhase('buying')
+    try {
+      const res = await apiGachaOpenAll(token, boxId)
+      patchUser(res.user)
+      setProgress(res.progress)
+      setHistory((prev) =>
+        [
+          ...res.packs
+            .slice()
+            .reverse()
+            .map((pack) => ({
+              boxId,
+              at: new Date().toISOString(),
+              cost: pack.cost,
+              packIndex: pack.packIndex,
+              reboxCount: pack.reboxCount,
+              cards: pack.cards,
+            })),
+          ...prev,
+        ].slice(0, 50),
+      )
+      if (box) setBox({ ...box, progress: res.progress })
+      setPullCards(null)
+      setBulkPacks(res.packs)
+      setBulkCost(res.totalCost)
+      setPhase('bulk')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'เปิดทั้งกล่องไม่สำเร็จ')
       setPhase('idle')
     } finally {
       setBusy(false)
@@ -337,18 +407,34 @@ export function GachaScreen() {
     phase === 'tearing' ||
     phase === 'ready' ||
     phase === 'flipping' ||
-    phase === 'done'
+    phase === 'done' ||
+    phase === 'bulk'
   const canBuy =
     !!p &&
     !p.isEmpty &&
     coins >= (box?.packCost ?? 20) &&
     !busy &&
     (phase === 'idle' || phase === 'done')
+  const packsLeft = p?.packsLeft ?? 0
+  const openAllCost = packsLeft * (box?.packCost ?? 20)
+  const canOpenAll =
+    !!p &&
+    packsLeft > 1 &&
+    coins >= openAllCost &&
+    !busy &&
+    phase === 'idle'
 
   const rarePulled = pullCards?.[pullCards.length - 1]
   const currentCard = pullCards?.[activeIndex] ?? null
   const isCurrentOpen = flipped[activeIndex] === true
   const openedCount = flipped.filter(Boolean).length
+  const bulkRares =
+    bulkPacks?.flatMap((pack) =>
+      pack.cards.filter((c) => c.rarity === 'UR' || c.rarity === 'SR' || c.rarity === 'R'),
+    ) ?? []
+  const bulkUrCount = bulkRares.filter((c) => c.rarity === 'UR').length
+  const bulkSrCount = bulkRares.filter((c) => c.rarity === 'SR').length
+  const bulkRCount = bulkRares.filter((c) => c.rarity === 'R').length
 
   return (
     <div
@@ -489,9 +575,25 @@ export function GachaScreen() {
                   {phase === 'buying'
                     ? 'กำลังสุ่ม…'
                     : p?.isEmpty
-                      ? 'กล่องว่าง — Rebox ที่แท็บในกล่อง'
+                      ? 'กำลังเตรียมกล่องใหม่…'
                       : `แตะเพื่อแกะซอง · ${box?.packCost ?? 20} เหรียญ`}
                 </p>
+                {phase === 'idle' && packsLeft > 1 && (
+                  <button
+                    type="button"
+                    className="gacha-open-all-btn"
+                    disabled={!canOpenAll}
+                    title={
+                      coins < openAllCost
+                        ? `เหรียญไม่พอ (ต้องการ ${openAllCost.toLocaleString('th-TH')})`
+                        : `เปิดซองที่เหลือ ${packsLeft} ซอง`
+                    }
+                    onClick={() => void onOpenAll()}
+                  >
+                    เปิดทั้งกล่อง · {packsLeft} ซอง (−
+                    {openAllCost.toLocaleString('th-TH')})
+                  </button>
+                )}
               </div>
             )}
 
@@ -690,7 +792,7 @@ export function GachaScreen() {
                         onClick={() => void onOpen({ continueAfterDone: true })}
                       >
                         {p?.isEmpty
-                          ? 'กล่องว่าง'
+                          ? 'เปิดซองถัดไป'
                           : `เปิดซองถัดไป (−${box?.packCost ?? 20})`}
                       </button>
                       <button
@@ -702,6 +804,114 @@ export function GachaScreen() {
                       </button>
                     </>
                   )}
+                </div>
+              </div>
+            )}
+
+            {phase === 'bulk' && bulkPacks && (
+              <div className="bulk-stage">
+                <header className="bulk-hero">
+                  <p className="bulk-kicker">เปิดทั้งกล่อง</p>
+                  <h2>
+                    {bulkPacks.length} ซอง · −{bulkCost.toLocaleString('th-TH')} เหรียญ
+                  </h2>
+                  <p className="bulk-summary">
+                    UR×{bulkUrCount} · SR×{bulkSrCount} · R×{bulkRCount} · รวม{' '}
+                    {bulkPacks.reduce((n, pack) => n + pack.cards.length, 0)} ใบ
+                  </p>
+                </header>
+
+                {bulkRares.some((c) => c.rarity === 'UR' || c.rarity === 'SR') && (
+                  <section className="bulk-highlights">
+                    <h3>ไฮไลต์</h3>
+                    <div className="bulk-highlight-row">
+                      {bulkRares
+                        .filter((c) => c.rarity === 'UR' || c.rarity === 'SR')
+                        .map((c, i) => (
+                          <button
+                            key={`hi-${c.cardId}-${i}`}
+                            type="button"
+                            className={`bulk-card rarity-${c.rarity}`}
+                            onMouseEnter={(e) => {
+                              if (isCoarsePointer()) return
+                              showPoolPreview(c, e.currentTarget, c.rarity)
+                            }}
+                            onMouseLeave={() => {
+                              if (isCoarsePointer()) return
+                              clearHoverPreview()
+                            }}
+                            onClick={(e) => {
+                              if (!isCoarsePointer()) return
+                              togglePoolPreview(c, e.currentTarget, c.rarity)
+                            }}
+                            aria-label={getCard(c.cardId).nameTh}
+                          >
+                            <CardView cardId={c.cardId} size="small" hideName />
+                            <span className={`bulk-chip rarity-${c.rarity}`}>
+                              {c.rarity}
+                            </span>
+                          </button>
+                        ))}
+                    </div>
+                  </section>
+                )}
+
+                <div className="bulk-packs">
+                  {bulkPacks.map((pack) => (
+                    <article key={`pack-${pack.packIndex}`} className="bulk-pack-row">
+                      <header>
+                        <span>ซอง #{pack.packIndex}</span>
+                        <span className="muted">
+                          {pack.cards.filter((c) => c.rarity !== 'C')[0]?.rarity ?? 'R'}
+                        </span>
+                      </header>
+                      <div className="bulk-pack-cards">
+                        {pack.cards.map((c, i) => (
+                          <button
+                            key={`${pack.packIndex}-${c.cardId}-${i}`}
+                            type="button"
+                            className={`bulk-mini rarity-${c.rarity}`}
+                            onMouseEnter={(e) => {
+                              if (isCoarsePointer()) return
+                              showPoolPreview(c, e.currentTarget, c.rarity)
+                            }}
+                            onMouseLeave={() => {
+                              if (isCoarsePointer()) return
+                              clearHoverPreview()
+                            }}
+                            onClick={(e) => {
+                              if (!isCoarsePointer()) return
+                              togglePoolPreview(c, e.currentTarget, c.rarity)
+                            }}
+                            aria-label={getCard(c.cardId).nameTh}
+                          >
+                            <CardView cardId={c.cardId} size="tiny" hideName />
+                          </button>
+                        ))}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+
+                <div className="gacha-actions reveal-actions">
+                  <button
+                    type="button"
+                    className="gacha-open-btn"
+                    disabled={!canBuy}
+                    onClick={() => {
+                      resetPullStage()
+                      void onOpen()
+                    }}
+                  >
+                    เปิดซองถัดไป (−{box?.packCost ?? 20})
+                  </button>
+                  <button
+                    type="button"
+                    className="gacha-rebox-btn"
+                    onClick={resetPullStage}
+                  >
+                    กลับ
+                  </button>
                 </div>
               </div>
             )}
@@ -1007,7 +1217,7 @@ export function GachaScreen() {
 
       {hoverPreview &&
         previewPos &&
-        (tab === 'odds' || tab === 'history') && (
+        (tab === 'odds' || tab === 'history' || phase === 'bulk') && (
           <div
             className={`gacha-hover-preview pool-beside-preview side-${previewSide}${
               previewSheet ? ' sheet' : ''
