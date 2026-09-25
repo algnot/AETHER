@@ -2,6 +2,11 @@ import { useLayoutEffect, useRef, useState, type DragEvent } from 'react'
 import { getCard } from '../data/cards'
 import {
   canActivateSoluy,
+  canActivateShorin,
+  canActivateAgatha,
+  canActivateNoah,
+  canActivateSaruka,
+  canActivateRyuka,
   canAlkataHandSummon,
   canPlaySpell,
   canReinforceSummon,
@@ -9,6 +14,10 @@ import {
   canSummon,
   canTargetMonster,
   getEffectiveAtk,
+  getEffectiveCost,
+  isKataSpellOrTrap,
+  canFreePlaceMonster,
+  isBarrierAttackTarget,
   listTrapsForWindow,
 } from '../engine/gameEngine'
 import { useDraggableModals } from '../hooks/useDraggableModals'
@@ -105,6 +114,23 @@ export function DuelBoard() {
   const finishReinforce = useAppStore((s) => s.finishReinforce)
   const pickEmergencyCard = useAppStore((s) => s.pickEmergencyCard)
   const pickInterferenceCard = useAppStore((s) => s.pickInterferenceCard)
+  const pickShorinCard = useAppStore((s) => s.pickShorinCard)
+  const cancelShorin = useAppStore((s) => s.cancelShorin)
+  const pickSarukaDiscardCard = useAppStore((s) => s.pickSarukaDiscardCard)
+  const pickSarukaCard = useAppStore((s) => s.pickSarukaCard)
+  const cancelSaruka = useAppStore((s) => s.cancelSaruka)
+  const pickRyukaCard = useAppStore((s) => s.pickRyukaCard)
+  const cancelRyuka = useAppStore((s) => s.cancelRyuka)
+  const cancelRyukaSleepPick = useAppStore((s) => s.cancelRyukaSleepPick)
+  const pickAgathaCard = useAppStore((s) => s.pickAgathaCard)
+  const cancelAgatha = useAppStore((s) => s.cancelAgatha)
+  const pickNoahCard = useAppStore((s) => s.pickNoahCard)
+  const cancelNoah = useAppStore((s) => s.cancelNoah)
+  const cancelGuardian = useAppStore((s) => s.cancelGuardian)
+  const cancelBuddy = useAppStore((s) => s.cancelBuddy)
+  const cancelHypnosis = useAppStore((s) => s.cancelHypnosis)
+  const pickTeleportCard = useAppStore((s) => s.pickTeleportCard)
+  const cancelTeleport = useAppStore((s) => s.cancelTeleport)
   const pickSignalAmpCard = useAppStore((s) => s.pickSignalAmpCard)
   const skipSignalAmpPick = useAppStore((s) => s.skipSignalAmpPick)
   const skipEmergency = useAppStore((s) => s.skipEmergency)
@@ -204,6 +230,26 @@ export function DuelBoard() {
   const soulDraining = game.interaction.type === 'soul_drain'
   const alkataPlotting = game.interaction.type === 'alkata_plot'
   const specialModding = game.interaction.type === 'special_mod'
+  const guardianPicking =
+    game.interaction.type === 'guardian_pick' &&
+    game.interaction.ownerId === 'player'
+  const buddyPicking =
+    game.interaction.type === 'buddy_pick' &&
+    game.interaction.ownerId === 'player'
+  const buddyFirstId =
+    game.interaction.type === 'buddy_pick'
+      ? game.interaction.firstId
+      : undefined
+  const hypnosisPicking =
+    game.interaction.type === 'hypnosis_pick' &&
+    game.interaction.ownerId === 'player'
+  const hypnosisFirstId =
+    game.interaction.type === 'hypnosis_pick'
+      ? game.interaction.firstId
+      : undefined
+  const teleportPicking =
+    game.interaction.type === 'teleport_pick' &&
+    game.interaction.ownerId === 'player'
   const interferencePicking = game.interaction.type === 'interference_pick'
   const signalAmpPicking = game.interaction.type === 'signal_amp_pick'
   const signalAmpRemaining =
@@ -218,6 +264,20 @@ export function DuelBoard() {
       ? 'ซาร่า — เลือกนักรบจากเด็ค'
       : 'มีน่า — เลือกนักรบจากเด็ค (ยกเว้นมีน่า)'
   const soluySwapping = game.interaction.type === 'soluy_swap'
+  const shorinSearching = game.interaction.type === 'shorin_search'
+  const sarukaSearching = game.interaction.type === 'saruka_search'
+  const sarukaStep =
+    game.interaction.type === 'saruka_search' ? game.interaction.step : null
+  const sarukaDiscarding = sarukaSearching && sarukaStep === 'discard'
+  const sarukaFetching = sarukaSearching && sarukaStep === 'fetch'
+  const ryukaFetching = game.interaction.type === 'ryuka_fetch'
+  const ryukaSleeping =
+    game.interaction.type === 'ryuka_sleep' &&
+    game.interaction.ownerId === 'player'
+  const agathaSearching = game.interaction.type === 'agatha_search'
+  const agathaStep =
+    game.interaction.type === 'agatha_search' ? game.interaction.step : null
+  const noahMilling = game.interaction.type === 'noah_mill'
   const solaPaying = game.interaction.type === 'sola_pay'
   const betaExtraDestroy = game.interaction.type === 'beta_extra_destroy'
   const soraDestroying = game.interaction.type === 'sora_destroy'
@@ -269,11 +329,19 @@ export function DuelBoard() {
     !game.awaitingTrap &&
     !discarding &&
     !saraDiscarding &&
+    !sarukaSearching &&
+    !ryukaFetching &&
+    !ryukaSleeping &&
+    !shorinSearching &&
     !alkataCallDiscarding &&
     !alkataCallSummoning &&
     !soulDraining &&
     !alkataPlotting &&
     !specialModding &&
+    !guardianPicking &&
+    !buddyPicking &&
+    !hypnosisPicking &&
+    !teleportPicking &&
     !interferencePicking &&
     !signalAmpPicking &&
     !emergencyPick &&
@@ -321,26 +389,58 @@ export function DuelBoard() {
     game.interaction.type === 'attack' &&
     opponent.field.every((z) => z === null)
 
-  // Only show trap UI when we are defending (CPU just attacked)
+  // Show trap UI whenever the player has an eligible response (attack or activate)
   const playerTrapWindow =
     game.awaitingTrap &&
     game.interaction.type === 'trap_response' &&
-    game.activePlayer === 'opponent'
+    (() => {
+      const threat = game.interaction.threat
+      const traps = listTrapsForWindow(player, threat.window, {
+        allowBarrier:
+          threat.window === 'on_attack' &&
+          isBarrierAttackTarget(game, 'player', threat.targetInstanceId),
+      })
+      return traps.length > 0
+    })()
   const trapWindow =
     game.interaction.type === 'trap_response'
       ? game.interaction.threat.window
       : null
   const eligibleTraps =
     playerTrapWindow && trapWindow
-      ? listTrapsForWindow(player, trapWindow)
+      ? listTrapsForWindow(player, trapWindow, {
+          allowBarrier:
+            trapWindow === 'on_attack' &&
+            game.interaction.type === 'trap_response' &&
+            isBarrierAttackTarget(
+              game,
+              'player',
+              game.interaction.threat.targetInstanceId,
+            ),
+        })
       : []
-  const trapOfferName =
-    trapWindow === 'on_attack' ? 'ระเบิดความตาย' : 'โล่แห่งแสง'
+  const trapOfferName = (() => {
+    if (trapWindow === 'on_destroy') return 'โล่แห่งแสง'
+    if (trapWindow === 'on_activate') return 'คาถาสกัดกั้น'
+    const hasBarrier = eligibleTraps.some(
+      (c) => getCard(c.cardId).effectId === 'kata_barrier',
+    )
+    const hasBlast = eligibleTraps.some(
+      (c) => getCard(c.cardId).effectId === 'death_blast',
+    )
+    if (hasBarrier && !hasBlast) return 'คาถาบาเรีย'
+    if (hasBlast && !hasBarrier) return 'ระเบิดความตาย'
+    return 'กับดัก'
+  })()
   const trapOfferHint =
-    trapWindow === 'on_attack'
+    trapWindow === 'on_activate'
+      ? 'อีกฝ่ายเปิดใช้การ์ด/เอฟเฟค — ใช้คาถาสกัดกั้นเพื่อยกเลิกและทำลายทิ้ง แล้วจอมเวทย์ฝั่งเรา ATK +3 จนจบเทิร์น'
+      : trapWindow === 'on_attack'
       ? eligibleTraps.length > 1
-        ? `อีกฝ่ายโจมตี — เลือก${trapOfferName} 1 ใบจากมือเพื่อลด ATK มอนสเตอร์ฝ่ายตรงข้ามทุกตัว −2 (ใช้ได้ใบเดียวต่อการโจมตี)`
-        : 'อีกฝ่ายโจมตี — ใช้ระเบิดความตายจากมือเพื่อลด ATK มอนสเตอร์บนสนามอีกฝ่ายทุกตัว −2'
+        ? 'อีกฝ่ายโจมตี — เลือกกับดัก 1 ใบ (ระเบิดความตาย: ATK −2 ทั้งสนาม / คาถาบาเรีย: ยกเลิกการโจมตี + ATK เป้าหมายครึ่งหนึ่ง)'
+        : eligibleTraps.some((c) => getCard(c.cardId).effectId === 'kata_barrier')
+          ? 'อีกฝ่ายโจมตีจอมเวทย์ — ใช้คาถาบาเรียเพื่อยกเลิกการโจมตีและลด ATK เป้าหมายลงครึ่งหนึ่ง'
+          : 'อีกฝ่ายโจมตี — ใช้ระเบิดความตายจากมือเพื่อลด ATK มอนสเตอร์บนสนามอีกฝ่ายทุกตัว −2'
       : eligibleTraps.length > 1
         ? `มอนสเตอร์จะถูกทำลาย — เลือก${trapOfferName} 1 ใบจากมือ (ใช้ได้ใบเดียว)`
         : 'มอนสเตอร์จะถูกทำลาย — ใช้โล่แห่งแสงจากมือได้'
@@ -390,6 +490,14 @@ export function DuelBoard() {
       ? `มือเกินลิมิต — คลิกทิ้งการ์ด (เหลือ ${discardLeft} ใบ)`
       : saraDiscarding
         ? 'ซาร่า — เลือกทิ้งการ์ดจากมือ 1 ใบ เพื่ออัญเชิญนักรบจากเด็ค'
+        : sarukaDiscarding
+          ? 'ซารุกะ — ทิ้งการ์ดจากมือ 1 ใบ'
+          : sarukaFetching
+            ? 'ซารุกะ — เลือก「คาถา」จากเด็คหรือสุสานขึ้นมือ'
+          : ryukaFetching
+            ? 'ริวกะ — เลือก「คาถา」จากสุสานขึ้นมือ'
+          : ryukaSleeping
+            ? 'ริวกะ — เลือกมอนสเตอร์ฝ่ายตรงข้ามให้นอนจนจบเทิร์นของอีกฝ่าย'
         : alkataCallDiscarding
           ? 'เสียงเรียกของอัลคาทา — ทิ้งการ์ดจากมือ 1 ใบ'
         : alkataCallSummoning
@@ -416,6 +524,18 @@ export function DuelBoard() {
                     ? 'การวางแผนของอัลคาทา — เลือกเทพแห่งอัลคาทาบนสนามเราเพื่อทำลาย แล้วจั่ว 2 ใบ'
                   : specialModding
                     ? 'ดัดแปลงขั้นพิเศษ — เลือกหุ่นยนต์แห่งการทำลายบนสนามเรา'
+                  : guardianPicking
+                    ? 'คาถาผู้ป้องกัน — เลือกจอมเวทย์บนสนามเราเพื่อล็อกจนจบเทิร์นฝ่ายตรงข้าม'
+                  : buddyPicking
+                    ? buddyFirstId
+                      ? 'คาถาคู่หู — เลือกจอมเวทย์ตัวที่สองเพื่อรวมพลังโจมตี'
+                      : 'คาถาคู่หู — เลือกจอมเวทย์ตัวแรกบนสนามเรา'
+                  : hypnosisPicking
+                    ? hypnosisFirstId
+                      ? 'คาถาสะกดจิต — เลือกมอนสเตอร์ฝ่ายตรงข้ามตัวที่สองให้ต่อสู้กัน'
+                      : 'คาถาสะกดจิต — เลือกมอนสเตอร์ฝ่ายตรงข้ามตัวแรก'
+                  : teleportPicking
+                    ? 'คาถาย้ายฉับพลัน — เลือกมอนสเตอร์จอมเวทย์จากเด็คหรือสุสานเพื่ออัญเชิญ'
                   : betaExtraDestroy
                     ? 'เบต้า — เลือกมอนสเตอร์ฝ่ายตรงข้ามเพื่อทำลายเพิ่ม หรือกดข้าม'
                   : soraDestroying
@@ -532,6 +652,16 @@ export function DuelBoard() {
                           onClick={() => !faceDown && hoverCard(c.cardId)}
                           onMouseEnter={() => !faceDown && hoverCard(c.cardId)}
                         />
+                        {!faceDown &&
+                          c.continuousTurnsLeft != null &&
+                          c.continuousTurnsLeft > 0 && (
+                            <span
+                              className="st-continuous-turns"
+                              title={`เหลือ ${c.continuousTurnsLeft} เทิร์น`}
+                            >
+                              {c.continuousTurnsLeft}
+                            </span>
+                          )}
                       </div>
                     )
                   })
@@ -565,8 +695,9 @@ export function DuelBoard() {
                     {m ? (
                       <CardView
                         instance={m}
+                        className={m.fieldLockUntil ? 'field-locked' : ''}
                         size="tiny"
-                        exhausted={m.hasAttacked}
+                        exhausted={!!m.hasAttacked || !!m.asleepUntil}
                         atkDisplay={getEffectiveAtk(
                           game,
                           'opponent',
@@ -579,9 +710,15 @@ export function DuelBoard() {
                             !protectedTarget) ||
                           betaExtraDestroy ||
                           soraDestroying ||
-                          alkataDebuffing
+                          alkataDebuffing ||
+                          ryukaSleeping ||
+                          (hypnosisPicking && m.instanceId !== hypnosisFirstId) ||
+                          hypnosisFirstId === m.instanceId
                         }
-                        dimmed={protectedTarget}
+                        dimmed={
+                          protectedTarget ||
+                          (hypnosisPicking && m.instanceId === hypnosisFirstId)
+                        }
                         fx={
                           battleFx?.attackerId === m.instanceId && lungeOffset
                             ? 'lunge'
@@ -659,8 +796,9 @@ export function DuelBoard() {
                     {m ? (
                       <CardView
                         instance={m}
+                        className={m.fieldLockUntil ? 'field-locked' : ''}
                         size="tiny"
-                        exhausted={m.hasAttacked}
+                        exhausted={!!m.hasAttacked || !!m.asleepUntil}
                         atkDisplay={getEffectiveAtk(
                           game,
                           'player',
@@ -681,13 +819,24 @@ export function DuelBoard() {
                             )) ||
                           (alkataPlotting &&
                             getCard(m.cardId).nameTh.includes('เทพแห่งอัลคาทา')) ||
+                          (guardianPicking &&
+                            getCard(m.cardId).tribe === 'mage') ||
+                          (buddyPicking &&
+                            getCard(m.cardId).tribe === 'mage' &&
+                            m.instanceId !== buddyFirstId) ||
+                          (buddyFirstId === m.instanceId) ||
                           (soluySwapping &&
                             !soluyBounceId &&
                             getCard(m.cardId).tribe === 'warrior' &&
                             getCard(m.cardId).effectId !== 'soluy_swap') ||
                           (canAct &&
                             (game.phase === 'main1' || game.phase === 'main2') &&
-                            canActivateSoluy(game, 'player', m.instanceId))
+                            (canActivateSoluy(game, 'player', m.instanceId) ||
+                              canActivateShorin(game, 'player', m.instanceId) ||
+                              canActivateSaruka(game, 'player', m.instanceId) ||
+                              canActivateRyuka(game, 'player', m.instanceId) ||
+                              canActivateAgatha(game, 'player', m.instanceId) ||
+                              canActivateNoah(game, 'player', m.instanceId)))
                         }
                         dimmed={
                           soluySwapping
@@ -706,6 +855,11 @@ export function DuelBoard() {
                                 ? !getCard(m.cardId).nameTh.includes(
                                     'เทพแห่งอัลคาทา',
                                   )
+                              : guardianPicking
+                                ? getCard(m.cardId).tribe !== 'mage'
+                              : buddyPicking
+                                ? getCard(m.cardId).tribe !== 'mage' ||
+                                  m.instanceId === buddyFirstId
                               : game.phase === 'battle' &&
                                 isPlayerTurn &&
                                 (!m.canAttack || m.hasAttacked)
@@ -787,6 +941,14 @@ export function DuelBoard() {
                           onClick={() => !faceDown && hoverCard(c.cardId)}
                           onMouseEnter={() => !faceDown && hoverCard(c.cardId)}
                         />
+                        {c.continuousTurnsLeft != null && c.continuousTurnsLeft > 0 && (
+                          <span
+                            className="st-continuous-turns"
+                            title={`เหลือ ${c.continuousTurnsLeft} เทิร์นของเรา`}
+                          >
+                            {c.continuousTurnsLeft}
+                          </span>
+                        )}
                       </div>
                     )
                   })
@@ -878,6 +1040,36 @@ export function DuelBoard() {
                 </button>
               )}
 
+              {buddyPicking && isPlayerTurn && (
+                <button type="button" className="direct-btn" onClick={cancelBuddy}>
+                  ยกเลิกคาถาคู่หู
+                </button>
+              )}
+
+              {hypnosisPicking && isPlayerTurn && (
+                <button type="button" className="direct-btn" onClick={cancelHypnosis}>
+                  ยกเลิกคาถาสะกดจิต
+                </button>
+              )}
+
+              {teleportPicking && isPlayerTurn && (
+                <button type="button" className="direct-btn" onClick={cancelTeleport}>
+                  ยกเลิกคาถาย้ายฉับพลัน
+                </button>
+              )}
+
+              {sarukaDiscarding && isPlayerTurn && (
+                <button type="button" className="direct-btn" onClick={cancelSaruka}>
+                  ยกเลิกซารุกะ
+                </button>
+              )}
+
+              {ryukaSleeping && isPlayerTurn && (
+                <button type="button" className="direct-btn" onClick={cancelRyukaSleepPick}>
+                  ข้ามริวกะ
+                </button>
+              )}
+
               {alkataHandSummon && (
                 <button type="button" className="direct-btn" onClick={skipAlkataHand}>
                   ข้ามอัญเชิญจากมือ
@@ -909,9 +1101,13 @@ export function DuelBoard() {
                 playerTrapWindow &&
                 trapWindow &&
                 ((trapWindow === 'on_attack' &&
-                  getCard(c.cardId).effectId === 'death_blast') ||
+                  (getCard(c.cardId).effectId === 'death_blast' ||
+                    getCard(c.cardId).effectId === 'kata_barrier')) ||
                   (trapWindow === 'on_destroy' &&
-                    getCard(c.cardId).effectId === 'light_shield'))
+                    getCard(c.cardId).effectId === 'light_shield') ||
+                  (trapWindow === 'on_activate' &&
+                    getCard(c.cardId).effectId === 'kata_intercept')) &&
+                eligibleTraps.some((t) => t.instanceId === c.instanceId)
               const soluyHandPick =
                 soluySwapping &&
                 !!soluyBounceId &&
@@ -945,7 +1141,7 @@ export function DuelBoard() {
                 <div
                   key={c.instanceId}
                   data-coach-card={c.cardId}
-                  className={`hand-wrap ${canDrag ? 'draggable' : ''} ${tutorialForced ? 'coach-force' : ''} ${tutorialLockedOut ? 'coach-dim' : ''} ${trapMatch || discarding || saraDiscarding || alkataCallDiscarding || soluyHandPick || alkataHandPick ? 'trap-ready' : ''} ${summoning === c.instanceId || playingSpell === c.instanceId || reinforceSelected === c.instanceId || trapMatch || discarding || saraDiscarding || alkataCallDiscarding || soluyHandPick || alkataHandPick || tutorialForced ? 'picking' : ''}`}
+                  className={`hand-wrap ${canDrag ? 'draggable' : ''} ${tutorialForced ? 'coach-force' : ''} ${tutorialLockedOut ? 'coach-dim' : ''} ${trapMatch || discarding || saraDiscarding || sarukaDiscarding || alkataCallDiscarding || soluyHandPick || alkataHandPick ? 'trap-ready' : ''} ${summoning === c.instanceId || playingSpell === c.instanceId || reinforceSelected === c.instanceId || trapMatch || discarding || saraDiscarding || sarukaDiscarding || alkataCallDiscarding || soluyHandPick || alkataHandPick || tutorialForced ? 'picking' : ''}`}
                   draggable={canDrag}
                   onDragStart={(e) => {
                     if (canDragReinforce || canDragMonster)
@@ -958,6 +1154,7 @@ export function DuelBoard() {
                   <CardView
                     instance={c}
                     size="small"
+                    costDisplay={getEffectiveCost(c, game, 'player')}
                     selected={
                       summoning === c.instanceId ||
                       playingSpell === c.instanceId ||
@@ -966,6 +1163,7 @@ export function DuelBoard() {
                       !!trapMatch ||
                       discarding ||
                       saraDiscarding ||
+                      sarukaDiscarding ||
                       alkataCallDiscarding ||
                       soluyHandPick ||
                       alkataHandPick ||
@@ -976,7 +1174,7 @@ export function DuelBoard() {
                         ? true
                         : playerTrapWindow
                           ? !trapMatch
-                          : discarding || saraDiscarding || alkataCallDiscarding
+                          : discarding || saraDiscarding || sarukaDiscarding || alkataCallDiscarding
                             ? false
                             : soluySwapping
                               ? !soluyHandPick
@@ -1195,6 +1393,368 @@ export function DuelBoard() {
                         </button>
                       )
                     })}
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+
+        {shorinSearching && isPlayerTurn && (
+          <div
+            className="gy-modal"
+            role="dialog"
+            aria-label="โชริน — เลือกคาถา"
+          >
+            <div className="gy-panel">
+              <header className="gy-head">
+                <h3>โชริน — เลือก「คาถา」จากเด็คหรือสุสาน</h3>
+                <button type="button" className="gy-close" onClick={cancelShorin}>
+                  ยกเลิก
+                </button>
+              </header>
+              {(() => {
+                const deckKata = player.deck.filter((c) =>
+                  isKataSpellOrTrap(c.cardId),
+                )
+                const gyKata = player.graveyard.filter((c) =>
+                  isKataSpellOrTrap(c.cardId),
+                )
+                return (
+                  <>
+                    <p className="gy-section-label">จากเด็ค</p>
+                    {deckKata.length === 0 ? (
+                      <p className="gy-empty">ไม่มีในเด็ค</p>
+                    ) : (
+                      <div className="gy-grid">
+                        {deckKata.map((c) => (
+                          <button
+                            key={`deck-${c.instanceId}`}
+                            type="button"
+                            className="gy-item picking"
+                            onClick={() => {
+                              hoverCard(c.cardId)
+                              pickShorinCard(c.instanceId, 'deck')
+                            }}
+                            onMouseEnter={() => hoverCard(c.cardId)}
+                            title="ขึ้นมือ · ค่าร่าย 0 จนจบเทิร์น"
+                          >
+                            <CardView instance={c} size="small" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <p className="gy-section-label">จากสุสาน</p>
+                    {gyKata.length === 0 ? (
+                      <p className="gy-empty">ไม่มีในสุสาน</p>
+                    ) : (
+                      <div className="gy-grid">
+                        {gyKata.map((c) => (
+                          <button
+                            key={`gy-${c.instanceId}`}
+                            type="button"
+                            className="gy-item picking"
+                            onClick={() => {
+                              hoverCard(c.cardId)
+                              pickShorinCard(c.instanceId, 'graveyard')
+                            }}
+                            onMouseEnter={() => hoverCard(c.cardId)}
+                            title="ขึ้นมือ · ค่าร่าย 0 จนจบเทิร์น"
+                          >
+                            <CardView instance={c} size="small" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+
+        {teleportPicking && isPlayerTurn && (
+          <div
+            className="gy-modal"
+            role="dialog"
+            aria-label="คาถาย้ายฉับพลัน — เลือกจอมเวทย์"
+          >
+            <div className="gy-panel">
+              <header className="gy-head">
+                <h3>คาถาย้ายฉับพลัน — เลือกจอมเวทย์จากเด็คหรือสุสาน</h3>
+                <button
+                  type="button"
+                  className="gy-close"
+                  onClick={cancelTeleport}
+                >
+                  ยกเลิก
+                </button>
+              </header>
+              {(() => {
+                const deckMages = player.deck.filter(
+                  (c) =>
+                    getCard(c.cardId).tribe === 'mage' &&
+                    canFreePlaceMonster(game, 'player', c.cardId),
+                )
+                const gyMages = player.graveyard.filter(
+                  (c) =>
+                    getCard(c.cardId).tribe === 'mage' &&
+                    canFreePlaceMonster(game, 'player', c.cardId),
+                )
+                return (
+                  <>
+                    <p className="gy-section-label">จากเด็ค</p>
+                    {deckMages.length === 0 ? (
+                      <p className="gy-empty">ไม่มีในเด็ค</p>
+                    ) : (
+                      <div className="gy-grid">
+                        {deckMages.map((c) => (
+                          <button
+                            key={`deck-${c.instanceId}`}
+                            type="button"
+                            className="gy-item picking"
+                            onClick={() => {
+                              hoverCard(c.cardId)
+                              pickTeleportCard(c.instanceId, 'deck')
+                            }}
+                            onMouseEnter={() => hoverCard(c.cardId)}
+                            title="อัญเชิญลงสนาม"
+                          >
+                            <CardView instance={c} size="small" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <p className="gy-section-label">จากสุสาน</p>
+                    {gyMages.length === 0 ? (
+                      <p className="gy-empty">ไม่มีในสุสาน</p>
+                    ) : (
+                      <div className="gy-grid">
+                        {gyMages.map((c) => (
+                          <button
+                            key={`gy-${c.instanceId}`}
+                            type="button"
+                            className="gy-item picking"
+                            onClick={() => {
+                              hoverCard(c.cardId)
+                              pickTeleportCard(c.instanceId, 'graveyard')
+                            }}
+                            onMouseEnter={() => hoverCard(c.cardId)}
+                            title="อัญเชิญลงสนาม"
+                          >
+                            <CardView instance={c} size="small" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+
+        {sarukaFetching && isPlayerTurn && (
+          <div
+            className="gy-modal"
+            role="dialog"
+            aria-label="ซารุกะ — เลือกคาถา"
+          >
+            <div className="gy-panel">
+              <header className="gy-head">
+                <h3>ซารุกะ — เลือก「คาถา」จากเด็คหรือสุสาน</h3>
+              </header>
+              {(() => {
+                const deckKata = player.deck.filter((c) =>
+                  isKataSpellOrTrap(c.cardId),
+                )
+                const gyKata = player.graveyard.filter((c) =>
+                  isKataSpellOrTrap(c.cardId),
+                )
+                return (
+                  <>
+                    <p className="gy-section-label">จากเด็ค</p>
+                    {deckKata.length === 0 ? (
+                      <p className="gy-empty">ไม่มีในเด็ค</p>
+                    ) : (
+                      <div className="gy-grid">
+                        {deckKata.map((c) => (
+                          <button
+                            key={`saruka-deck-${c.instanceId}`}
+                            type="button"
+                            className="gy-item picking"
+                            onClick={() => {
+                              hoverCard(c.cardId)
+                              pickSarukaCard(c.instanceId, 'deck')
+                            }}
+                            onMouseEnter={() => hoverCard(c.cardId)}
+                          >
+                            <CardView instance={c} size="small" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <p className="gy-section-label">จากสุสาน</p>
+                    {gyKata.length === 0 ? (
+                      <p className="gy-empty">ไม่มีในสุสาน</p>
+                    ) : (
+                      <div className="gy-grid">
+                        {gyKata.map((c) => (
+                          <button
+                            key={`saruka-gy-${c.instanceId}`}
+                            type="button"
+                            className="gy-item picking"
+                            onClick={() => {
+                              hoverCard(c.cardId)
+                              pickSarukaCard(c.instanceId, 'graveyard')
+                            }}
+                            onMouseEnter={() => hoverCard(c.cardId)}
+                          >
+                            <CardView instance={c} size="small" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+
+        {ryukaFetching && isPlayerTurn && (
+          <div
+            className="gy-modal"
+            role="dialog"
+            aria-label="ริวกะ — เลือกคาถาจากสุสาน"
+          >
+            <div className="gy-panel">
+              <header className="gy-head">
+                <h3>ริวกะ — เลือก「คาถา」จากสุสานขึ้นมือ</h3>
+                <button type="button" className="gy-close" onClick={cancelRyuka}>
+                  ยกเลิก
+                </button>
+              </header>
+              {(() => {
+                const gyKata = player.graveyard.filter((c) =>
+                  isKataSpellOrTrap(c.cardId),
+                )
+                return gyKata.length === 0 ? (
+                  <p className="gy-empty">ไม่มีในสุสาน</p>
+                ) : (
+                  <div className="gy-grid">
+                    {gyKata.map((c) => (
+                      <button
+                        key={`ryuka-${c.instanceId}`}
+                        type="button"
+                        className="gy-item picking"
+                        onClick={() => {
+                          hoverCard(c.cardId)
+                          pickRyukaCard(c.instanceId)
+                        }}
+                        onMouseEnter={() => hoverCard(c.cardId)}
+                        title="ขึ้นมือ · เปิดใช้ชื่อนี้เทิร์นนี้ทำผล 2 รอบ"
+                      >
+                        <CardView instance={c} size="small" />
+                      </button>
+                    ))}
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+
+        {agathaSearching && isPlayerTurn && (
+          <div
+            className="gy-modal"
+            role="dialog"
+            aria-label="อากาธา — เลือกคาถา"
+          >
+            <div className="gy-panel">
+              <header className="gy-head">
+                <h3>
+                  {agathaStep === 'gy'
+                    ? 'อากาธา — คืน「คาถา」จากสุสานเข้าเด็ค'
+                    : 'อากาธา — เลือก「คาถา」จากเด็คขึ้นมือ'}
+                </h3>
+                <button type="button" className="gy-close" onClick={cancelAgatha}>
+                  ยกเลิก
+                </button>
+              </header>
+              {(() => {
+                const pool =
+                  agathaStep === 'gy'
+                    ? player.graveyard.filter((c) => isKataSpellOrTrap(c.cardId))
+                    : player.deck.filter((c) => isKataSpellOrTrap(c.cardId))
+                return pool.length === 0 ? (
+                  <p className="gy-empty">
+                    {agathaStep === 'gy' ? 'ไม่มีในสุสาน' : 'ไม่มีในเด็ค'}
+                  </p>
+                ) : (
+                  <div className="gy-grid">
+                    {pool.map((c) => (
+                      <button
+                        key={c.instanceId}
+                        type="button"
+                        className="gy-item picking"
+                        onClick={() => {
+                          hoverCard(c.cardId)
+                          pickAgathaCard(c.instanceId)
+                        }}
+                        onMouseEnter={() => hoverCard(c.cardId)}
+                        title={
+                          agathaStep === 'gy'
+                            ? 'กลับเข้าเด็ค'
+                            : 'ขึ้นมือ · จอมเวทย์ ATK +3 จนจบเทิร์น'
+                        }
+                      >
+                        <CardView instance={c} size="small" />
+                      </button>
+                    ))}
+                  </div>
+                )
+              })()}
+            </div>
+          </div>
+        )}
+
+        {noahMilling && isPlayerTurn && (
+          <div
+            className="gy-modal"
+            role="dialog"
+            aria-label="โนอา — เลือกคาถาจากเด็ค"
+          >
+            <div className="gy-panel">
+              <header className="gy-head">
+                <h3>โนอา — เลือก「คาถา」จากเด็คเพื่อใช้</h3>
+                <button type="button" className="gy-close" onClick={cancelNoah}>
+                  ยกเลิก
+                </button>
+              </header>
+              {(() => {
+                const deckKata = player.deck.filter((c) =>
+                  isKataSpellOrTrap(c.cardId),
+                )
+                return deckKata.length === 0 ? (
+                  <p className="gy-empty">ไม่มีในเด็ค</p>
+                ) : (
+                  <div className="gy-grid">
+                    {deckKata.map((c) => (
+                      <button
+                        key={c.instanceId}
+                        type="button"
+                        className="gy-item picking"
+                        onClick={() => {
+                          hoverCard(c.cardId)
+                          pickNoahCard(c.instanceId)
+                        }}
+                        onMouseEnter={() => hoverCard(c.cardId)}
+                        title="ลงสุสาน · ใช้ความสามารถ · นับว่าเปิดใช้คาถา"
+                      >
+                        <CardView instance={c} size="small" />
+                      </button>
+                    ))}
                   </div>
                 )
               })()}

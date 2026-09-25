@@ -77,3 +77,18 @@ export const SALVAGE_GEMS_BY_RARITY: Record<Rarity, number> = {
 export function salvageGemsForRarity(rarity: Rarity): number {
   return SALVAGE_GEMS_BY_RARITY[rarity]
 }
+
+/**
+ * Gems to evolve one copy (full-art frame). Per copy, not per card id.
+ * C 50 · R 100 · SR 500 · UR 1000
+ */
+export const EVO_COST_BY_RARITY: Record<Rarity, number> = {
+  C: 50,
+  R: 100,
+  SR: 500,
+  UR: 1000,
+}
+
+export function evoCostForRarity(rarity: Rarity): number {
+  return EVO_COST_BY_RARITY[rarity]
+}

@@ -13,8 +13,9 @@ import {
   type GachaHistoryEntry,
   type GachaPullCard,
 } from '../api/gacha'
-import { GACHA_BOX_LIST, getGachaBox } from '../data/gachaBoxes'
+import { GACHA_BOX_LIST, getGachaBox, canOpenGacha, defaultBoxProgress, remainingInBox } from '../data/gachaBoxes'
 import { getCard, CARD_DATABASE } from '../data/cards'
+import { boxPoolSummary } from '../lib/gacha'
 import { useAuthStore } from '../store/authStore'
 import { useAppStore } from '../store/gameStore'
 import { RARITY_LABELS, type Rarity } from '../types/game'
@@ -51,6 +52,7 @@ function wait(ms: number) {
 export function GachaScreen() {
   const token = useAuthStore((s) => s.token)
   const coins = useAuthStore((s) => s.user?.coins ?? 0)
+  const isDev = useAuthStore((s) => s.user?.isDev ?? false)
   const patchUser = useAuthStore((s) => s.patchUser)
   const setScreen = useAppStore((s) => s.setScreen)
 
@@ -60,6 +62,7 @@ export function GachaScreen() {
   const boxMeta = getGachaBox(boxId)
   const coverArt = boxMeta?.coverArt ?? '/gacha/box-s00-pack-v2.png'
   const backgroundArt = boxMeta?.backgroundArt ?? coverArt
+  const gachaOn = boxMeta ? canOpenGacha(boxMeta, { isDev }) : true
 
   const [box, setBox] = useState<GachaBoxView | null>(null)
   const [progress, setProgress] = useState<BoxProgressView | null>(null)
@@ -149,6 +152,28 @@ export function GachaScreen() {
 
   const load = useCallback(async () => {
     if (!token) return
+    const meta = getGachaBox(boxId)
+    const localFallback = (): GachaBoxView | null => {
+      if (!meta) return null
+      const pool = boxPoolSummary(meta)
+      return {
+        id: meta.id,
+        name: meta.name,
+        nameTh: meta.nameTh,
+        prefix: meta.prefix,
+        packCost: meta.packCost,
+        packsPerBox: meta.packsPerBox,
+        cardsPerPack: meta.cardsPerPack,
+        commonsPerPack: meta.commonsPerPack,
+        urPerBox: meta.urPerBox,
+        srPerBox: meta.srPerBox,
+        rareRates: meta.rareRates,
+        pool,
+        progress: remainingInBox(meta, defaultBoxProgress()),
+        gachaEnabled: canOpenGacha(meta, { isDev }),
+      }
+    }
+
     try {
       const [{ box: b }, { history: h }] = await Promise.all([
         apiGachaBox(token, boxId),
@@ -159,9 +184,21 @@ export function GachaScreen() {
       setHistory(h)
       setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'โหลดไม่สำเร็จ')
+      const fallback = localFallback()
+      if (fallback) {
+        setBox(fallback)
+        setProgress(fallback.progress)
+        setHistory([])
+        setError(
+          err instanceof Error
+            ? `${err.message} · แสดงพูลการ์ดจากเครื่อง`
+            : 'โหลดไม่สำเร็จ · แสดงพูลการ์ดจากเครื่อง',
+        )
+      } else {
+        setError(err instanceof Error ? err.message : 'โหลดไม่สำเร็จ')
+      }
     }
-  }, [token, boxId])
+  }, [token, boxId, isDev])
 
   useEffect(() => {
     void load()
@@ -178,6 +215,20 @@ export function GachaScreen() {
     skipRef.current = false
     revealLock.current = false
   }
+
+  useEffect(() => {
+    // Catalog-only boxes open on the card browser (dev can still pull)
+    if (boxMeta && !canOpenGacha(boxMeta, { isDev })) {
+      setTab('odds')
+      setPhase('idle')
+      setPullCards(null)
+      setBulkPacks(null)
+      setFlipped([])
+      setActiveIndex(0)
+      setBurst(null)
+      clearHoverPreview()
+    }
+  }, [boxId, boxMeta, isDev])
 
   const cycleBox = (dir: 'prev' | 'next') => {
     if (phase !== 'idle' || slideDir || busy) return
@@ -407,6 +458,7 @@ export function GachaScreen() {
     phase === 'done' ||
     phase === 'bulk'
   const canBuy =
+    gachaOn &&
     !!p &&
     !p.isEmpty &&
     coins >= (box?.packCost ?? 20) &&
@@ -415,6 +467,7 @@ export function GachaScreen() {
   const packsLeft = p?.packsLeft ?? 0
   const openAllCost = packsLeft * (box?.packCost ?? 20)
   const canOpenAll =
+    gachaOn &&
     !!p &&
     packsLeft > 1 &&
     coins >= openAllCost &&
@@ -432,7 +485,7 @@ export function GachaScreen() {
 
   return (
     <div
-      className={`gacha-root ${burst ? `burst-${burst}` : ''}`}
+      className={`gacha-root tab-${tab} ${burst ? `burst-${burst}` : ''}`}
       style={
         {
           '--gacha-bg': `url(${backgroundArt})`,
@@ -468,9 +521,11 @@ export function GachaScreen() {
       <div className="gacha-tabs" role="tablist">
         {(
           [
-            ['pull', 'เปิดซอง'],
-            ['odds', 'ในกล่อง'],
-            ['history', 'ประวัติ'],
+            ...(gachaOn
+              ? ([['pull', 'เปิดซอง']] as const)
+              : ([['pull', 'ตัวอย่าง']] as const)),
+            ['odds', gachaOn ? 'ในกล่อง' : 'การ์ดทั้งหมด'],
+            ...(gachaOn ? ([['history', 'ประวัติ']] as const) : []),
           ] as const
         ).map(([id, label]) => (
           <button
@@ -493,13 +548,14 @@ export function GachaScreen() {
         ))}
       </div>
 
-      {tab === 'pull' && (phase === 'idle' || phase === 'buying') && (
+      {(tab === 'odds' ||
+        (tab === 'pull' && (phase === 'idle' || phase === 'buying'))) && (
         <>
           <button
             type="button"
             className="box-nav edge prev"
             title="กล่องก่อนหน้า"
-            disabled={phase !== 'idle' || !!slideDir || busy}
+            disabled={(tab === 'pull' && phase !== 'idle') || !!slideDir || busy}
             onClick={() => cycleBox('prev')}
             aria-label="เลื่อนไปกล่องก่อนหน้า"
           >
@@ -509,7 +565,7 @@ export function GachaScreen() {
             type="button"
             className="box-nav edge next"
             title="กล่องถัดไป"
-            disabled={phase !== 'idle' || !!slideDir || busy}
+            disabled={(tab === 'pull' && phase !== 'idle') || !!slideDir || busy}
             onClick={() => cycleBox('next')}
             aria-label="เลื่อนไปกล่องถัดไป"
           >
@@ -566,13 +622,15 @@ export function GachaScreen() {
                   </span>
                 </button>
                 <p className="pack-hint">
-                  {phase === 'buying'
-                    ? 'กำลังสุ่ม…'
-                    : p?.isEmpty
-                      ? 'กำลังเตรียมกล่องใหม่…'
-                      : `แตะเพื่อแกะซอง · ${box?.packCost ?? 20} เหรียญ`}
+                  {!gachaOn
+                    ? 'Box นี้ยังไม่เปิดสุ่ม — สลับแท็บ「การ์ดทั้งหมด」เพื่อดูพูล'
+                    : phase === 'buying'
+                      ? 'กำลังสุ่ม…'
+                      : p?.isEmpty
+                        ? 'กำลังเตรียมกล่องใหม่…'
+                        : `แตะเพื่อแกะซอง · ${box?.packCost ?? 20} เหรียญ`}
                 </p>
-                {phase === 'idle' && packsLeft > 1 && (
+                {gachaOn && phase === 'idle' && packsLeft > 1 && (
                   <button
                     type="button"
                     className="gacha-open-all-btn"
@@ -586,6 +644,15 @@ export function GachaScreen() {
                   >
                     เปิดทั้งกล่อง · {packsLeft} ซอง (−
                     {openAllCost.toLocaleString('th-TH')})
+                  </button>
+                )}
+                {!gachaOn && phase === 'idle' && (
+                  <button
+                    type="button"
+                    className="gacha-open-all-btn"
+                    onClick={() => setTab('odds')}
+                  >
+                    ดูการ์ดทั้งหมดในกล่อง
                   </button>
                 )}
               </div>
@@ -911,10 +978,12 @@ export function GachaScreen() {
               <p className="odds-kicker">Box {box.id}</p>
               <h2>{box.nameTh}</h2>
               <p className="odds-lead">
-                พูลรหัส {box.prefix}* · {box.pool.total} ชนิด · ซองละ{' '}
-                {box.packCost} เหรียญ
+                พูลรหัส {box.prefix}* · {box.pool.total} ชนิด
+                {gachaOn
+                  ? ` · ซองละ ${box.packCost} เหรียญ`
+                  : ' · ยังไม่เปิดสุ่ม (พรีวิวพูล)'}
               </p>
-              {p && (
+              {gachaOn && p && (
                 <div className="odds-progress">
                   <div
                     className="odds-progress-bar"
@@ -931,27 +1000,35 @@ export function GachaScreen() {
                 </div>
               )}
               <div className="odds-hero-actions">
-                <button
-                  type="button"
-                  className="gacha-open-btn"
-                  onClick={() => setTab('pull')}
-                >
-                  ไปเปิดซอง
-                </button>
-                <button
-                  type="button"
-                  className="gacha-rebox-btn"
-                  disabled={busy}
-                  onClick={() => void onRebox()}
-                >
-                  <RotateCcw size={16} />
-                  Rebox
-                </button>
+                {gachaOn ? (
+                  <>
+                    <button
+                      type="button"
+                      className="gacha-open-btn"
+                      onClick={() => setTab('pull')}
+                    >
+                      ไปเปิดซอง
+                    </button>
+                    <button
+                      type="button"
+                      className="gacha-rebox-btn"
+                      disabled={busy}
+                      onClick={() => void onRebox()}
+                    >
+                      <RotateCcw size={16} />
+                      Rebox
+                    </button>
+                  </>
+                ) : (
+                  <p className="odds-catalog-note">
+                    ตอนนี้มีเฉพาะสายจอมเวทย์ — สุ่มซองจะเปิดภายหลัง
+                  </p>
+                )}
               </div>
             </div>
           </section>
 
-          {p && (
+          {gachaOn && p && (
             <section className="odds-remain">
               <h3>เหลือในกล่องนี้</h3>
               <div className="odds-remain-grid">
@@ -1009,6 +1086,7 @@ export function GachaScreen() {
             </section>
           )}
 
+          {gachaOn && (
           <section className="odds-anatomy">
             <h3>ใน 1 ซอง</h3>
             <div className="anatomy-row">
@@ -1052,26 +1130,33 @@ export function GachaScreen() {
               เท่ากับ UR+SR ที่ยังไม่ได้ จะออกแค่ UR/SR จนครบ
             </p>
           </section>
+          )}
 
           <section className="odds-pool">
-            <h3>พูลการ์ด</h3>
-            <p className="odds-pool-hint">วางเมาส์บนการ์ดเพื่อดูเอฟเฟค</p>
-            <div className="pool-rarity-grid">
+            <h3>{gachaOn ? 'พูลการ์ด' : 'การ์ดทั้งหมดในกล่อง'}</h3>
+            <p className="odds-pool-hint">
+              {gachaOn
+                ? 'วางเมาส์บนการ์ดเพื่อดูเอฟเฟค'
+                : 'พรีวิวพูลจอมเวทย์ — คลิกหรือวางเมาส์เพื่อดูรายละเอียด'}
+            </p>
+            <div className={`pool-rarity-grid${gachaOn ? '' : ' pool-full'}`}>
               {(['UR', 'SR', 'R', 'C'] as Rarity[]).map((r) => {
                 const samples = CARD_DATABASE.filter(
                   (c) => c.rarity === r && c.id.startsWith(box.prefix),
-                ).slice(0, 4)
+                )
+                const shown = gachaOn ? samples.slice(0, 4) : samples
+                if (samples.length === 0) return null
                 return (
                   <article key={r} className={`pool-tile rarity-${r}`}>
                     <header>
                       <span className={`pool-badge rarity-${r}`}>{r}</span>
                       <div>
                         <strong>{RARITY_LABELS[r]}</strong>
-                        <p>{box.pool[r]} ชนิด</p>
+                        <p>{samples.length} ชนิด</p>
                       </div>
                     </header>
                     <div className="pool-thumbs">
-                      {samples.map((c) => (
+                      {shown.map((c) => (
                         <button
                           key={c.id}
                           type="button"
@@ -1115,9 +1200,9 @@ export function GachaScreen() {
                           <CardView cardId={c.id} size="tiny" hideName />
                         </button>
                       ))}
-                      {box.pool[r] > samples.length && (
+                      {gachaOn && samples.length > shown.length && (
                         <span className="pool-more">
-                          +{box.pool[r] - samples.length}
+                          +{samples.length - shown.length}
                         </span>
                       )}
                     </div>

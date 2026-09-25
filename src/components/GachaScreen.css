@@ -622,6 +622,14 @@
   right: max(6px, env(safe-area-inset-right, 0px));
 }
 
+/* Odds / pool tab: sit beside hero art, not over “การ์ดทั้งหมดในกล่อง” */
+.gacha-root.tab-odds .box-nav.edge {
+  top: calc(
+    env(safe-area-inset-top, 0px) + 118px + min(52vw, 220px) / 2
+  );
+  transform: translateY(-50%);
+}
+
 .box-nav.edge:hover:not(:disabled) {
   border-color: var(--g-brass);
   background: rgba(40, 20, 60, 0.72);
@@ -1237,6 +1245,8 @@
   flex-direction: column;
   gap: 18px;
   padding-bottom: 28px;
+  padding-left: calc(44px + 10px);
+  padding-right: calc(44px + 10px);
 }
 
 .gacha-odds h3 {
@@ -1342,6 +1352,19 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.odds-catalog-note {
+  margin: 0;
+  font-size: 0.92rem;
+  opacity: 0.85;
+  line-height: 1.45;
+}
+
+.pool-rarity-grid.pool-full .pool-thumbs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 0.55rem;
 }
 
 .odds-remain-grid {
@@ -1882,6 +1905,17 @@
   .box-nav.edge {
     width: 36px;
     height: 48px;
+  }
+
+  .gacha-odds {
+    padding-left: calc(36px + 8px);
+    padding-right: calc(36px + 8px);
+  }
+
+  .gacha-root.tab-odds .box-nav.edge {
+    top: calc(
+      env(safe-area-inset-top, 0px) + 108px + min(48vw, 180px) / 2
+    );
   }
 
   .reveal-stage.one-by-one {

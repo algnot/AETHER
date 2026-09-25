@@ -1,4 +1,4 @@
-export type Tribe = 'insect' | 'dragon' | 'warrior' | 'robot' | 'god'
+export type Tribe = 'insect' | 'dragon' | 'warrior' | 'robot' | 'god' | 'mage'
 
 export type CardType = 'monster' | 'spell' | 'trap'
 
@@ -26,6 +26,7 @@ export const TRIBE_LABELS: TribeLabel = {
   warrior: 'นักรบ',
   robot: 'หุ่นยนต์',
   god: 'เทพ',
+  mage: 'จอมเวทย์',
 }
 
 export const CARD_TYPE_LABELS: Record<CardType, string> = {
@@ -90,6 +91,19 @@ export interface CardDefinition {
     | 'hokana_alkata'
     | 'alkata_call'
     | 'alkata_plot'
+    | 'shorin_mage'
+    | 'agatha_mage'
+    | 'noah_mage'
+    | 'dynogr_mage'
+    | 'saruka_mage'
+    | 'ryuka_mage'
+    | 'kata_guardian'
+    | 'kata_prepare'
+    | 'kata_buddy'
+    | 'kata_hypnosis'
+    | 'kata_blink'
+    | 'kata_barrier'
+    | 'kata_intercept'
   description: string
 }
 
@@ -104,6 +118,13 @@ export interface CardInstance {
   atkMod?: number
   /** Temporary ATK modifier cleared at end of turn */
   tempAtkMod?: number
+  /**
+   * ATK bonus cleared when the opponent of this card's controller ends their turn
+   * (Saruka — +8 until opp EOT)
+   */
+  oppEotAtkMod?: number
+  /** Cost override until end of turn (e.g. Shorin free spell/trap) */
+  tempCostOverride?: number
   /** Destroyed when the controller's turn ends (e.g. Signal Amplifier) */
   destroyAtEndTurn?: boolean
   /** Destroyed when a Battle Phase begins (e.g. Call of Alkata) */
@@ -112,6 +133,21 @@ export interface CardInstance {
   effectUsed?: boolean
   /** Times this monster's activated effect was used this turn (e.g. Soluy ×2) */
   effectUses?: number
+  /**
+   * Cannot leave the field until this player ends their turn
+   * (Guardian Incantation — cleared at that player's end turn)
+   */
+  fieldLockUntil?: PlayerId
+  /**
+   * Continuous spell/trap: remaining controller turns on the ST zone
+   * (Preparation Incantation — decremented at controller end turn)
+   */
+  continuousTurnsLeft?: number
+  /**
+   * Asleep: cannot attack until this player ends their turn
+   * (Ryuka — sleep until end of opponent's next turn)
+   */
+  asleepUntil?: PlayerId
   /** Set face-down on spell/trap zone */
   faceDown?: boolean
 }
@@ -134,6 +170,15 @@ export interface PlayerState {
   alkataHandSummonUsedThisTurn?: boolean
   /** Card IDs already special-summoned via Alkata leave-hand effect this turn */
   alkataHandSummonedCardIdsThisTurn?: string[]
+  /**
+   * Ryuka: nameTh of 「คาถา」 fetched from GY this turn — matching activations resolve twice
+   */
+  ryukaEchoNames?: string[]
+  /** Ryuka: need to pick an opponent monster to sleep after a 「คาถา」 resolves */
+  ryukaSleepPending?: boolean
+  /** Ryuka: queue a second resolution of this interactive effectId */
+  ryukaDoubleQueued?: boolean
+  ryukaDoubleEffectId?: string
   deck: CardInstance[]
   hand: CardInstance[]
   graveyard: CardInstance[]
@@ -156,8 +201,23 @@ export type InteractionMode =
       threat: {
         targetInstanceId: string
         attackerInstanceId: string
-        window: 'on_attack' | 'on_destroy'
+        window: 'on_attack' | 'on_destroy' | 'on_activate'
+        /** on_activate — who activated the card/effect being countered */
+        activatorId?: PlayerId
+        sourceKind?: 'spell' | 'trap' | 'monster_effect'
+        /** Monster effect resume key (effectId) after decline */
+        resume?: string
+        /** When countering a trap mid-attack window — restore this after decline */
+        priorWindow?: 'on_attack' | 'on_destroy'
+        priorTargetInstanceId?: string
+        priorAttackerInstanceId?: string
       }
+    }
+  /** After declining intercept — finish casting this spell (skip re-offer) */
+  | {
+      type: 'resume_spell_cast'
+      ownerId: PlayerId
+      instanceId: string
     }
   /** After Call Reinforcements — summon warriors paying HP */
   | { type: 'reinforce'; summonsLeft: number; selectedInstanceId?: string }
@@ -214,6 +274,54 @@ export type InteractionMode =
       type: 'soluy_swap'
       sourceId: string
       bounceId?: string
+    }
+  /** Shorin — pick a 「คาถา」 spell/trap from deck or GY to hand (cost 0 EOT) */
+  | { type: 'shorin_search'; sourceId: string; ownerId: PlayerId }
+  /** Saruka — discard 1, then fetch 「คาถา」 from deck or GY */
+  | {
+      type: 'saruka_search'
+      sourceId: string
+      ownerId: PlayerId
+      step: 'discard' | 'fetch'
+    }
+  /** Ryuka — fetch 「คาถา」 from GY to hand (echo double this turn) */
+  | { type: 'ryuka_fetch'; sourceId: string; ownerId: PlayerId }
+  /** Ryuka — put an opponent monster to sleep until their EOT */
+  | { type: 'ryuka_sleep'; ownerId: PlayerId }
+  /** Agatha — recycle คาถา from GY to deck, then fetch คาถา from deck; buff mages */
+  | {
+      type: 'agatha_search'
+      sourceId: string
+      ownerId: PlayerId
+      step: 'gy' | 'deck'
+    }
+  /** Noah — mill a 「คาถา」 from deck to GY and resolve it as activated */
+  | { type: 'noah_mill'; sourceId: string; ownerId: PlayerId }
+  /** Guardian Incantation — pick a mage to lock on field until opp EOT */
+  | {
+      type: 'guardian_pick'
+      spellInstanceId: string | null
+      ownerId: PlayerId
+    }
+  /** Partner Incantation — pick up to 2 mages; combine ATK onto both */
+  | {
+      type: 'buddy_pick'
+      spellInstanceId: string | null
+      ownerId: PlayerId
+      firstId?: string
+    }
+  /** Hypnosis Incantation — force 2 opponent monsters to battle each other */
+  | {
+      type: 'hypnosis_pick'
+      spellInstanceId: string | null
+      ownerId: PlayerId
+      firstId?: string
+    }
+  /** Blink Incantation — summon a mage from deck or GY */
+  | {
+      type: 'teleport_pick'
+      spellInstanceId: string | null
+      ownerId: PlayerId
     }
   /** Alkata god left the field — add one from GY to hand */
   | { type: 'alkata_gy_recover'; ownerId: PlayerId }

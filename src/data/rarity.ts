@@ -41,6 +41,19 @@ const EFFECT_BONUS: Partial<Record<EffectId, number>> = {
   hokana_alkata: 7,
   alkata_call: 8,
   alkata_plot: 6,
+  shorin_mage: 8,
+  agatha_mage: 9,
+  noah_mage: 8,
+  dynogr_mage: 9,
+  saruka_mage: 8,
+  ryuka_mage: 9,
+  kata_guardian: 5,
+  kata_prepare: 6,
+  kata_buddy: 6,
+  kata_hypnosis: 6,
+  kata_blink: 7,
+  kata_barrier: 6,
+  kata_intercept: 7,
 }
 
 /**

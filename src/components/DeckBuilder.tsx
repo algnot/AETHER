@@ -23,6 +23,7 @@ import {
 } from '../data/cards'
 import { deckFileName, parseDeckJson, serializeDeck } from '../data/deckJson'
 import {
+  EVO_COST_BY_RARITY,
   SALVAGE_GEMS_BY_RARITY,
   SALVAGE_KEEP_COPIES,
 } from '../lib/economy'
@@ -148,9 +149,12 @@ export function DeckBuilder() {
   const isDeckValid = useDeckStore((s) => s.isDeckValid)
   const setScreen = useAppStore((s) => s.setScreen)
   const inventory = useAuthStore((s) => s.user?.inventory ?? {})
+  const evolvedMap = useAuthStore((s) => s.user?.evolved ?? {})
   const gems = useAuthStore((s) => s.user?.gems ?? 0)
   const salvageExcess = useAuthStore((s) => s.salvageExcess)
   const salvaging = useAuthStore((s) => s.salvaging)
+  const evolveCard = useAuthStore((s) => s.evolveCard)
+  const evolving = useAuthStore((s) => s.evolving)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const [view, setView] = useState<'shelf' | 'edit'>('shelf')
@@ -179,6 +183,7 @@ export function DeckBuilder() {
   const [atkFilter, setAtkFilter] = useState<'all' | number>('all')
   const [search, setSearch] = useState('')
   const [preview, setPreview] = useState<string | null>(CARD_DATABASE[0].id)
+  const [previewEvolved, setPreviewEvolved] = useState(false)
   const [hoverKey, setHoverKey] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState<'deck' | 'catalog' | null>(null)
   const [nameModal, setNameModal] = useState<'rename' | 'create' | null>(null)
@@ -188,6 +193,7 @@ export function DeckBuilder() {
   const [salvageOpen, setSalvageOpen] = useState(false)
   const [salvageError, setSalvageError] = useState<string | null>(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
+  const [evoBusy, setEvoBusy] = useState(false)
 
   const salvagePlan = useMemo(() => buildSalvagePlan(inventory), [inventory])
   const canSalvage = salvagePlan.totalCards > 0
@@ -256,14 +262,57 @@ export function DeckBuilder() {
     })
   }, [filter, tribe, search, costFilter, atkFilter, showTribe, showAtk])
 
-  /** Unique catalog rows: remaining = owned − in deck; 0 left → gray like unowned. */
+  /** Catalog rows split by evo vs normal when both exist. */
   const collectionRows = useMemo(() => {
-    const rows = catalog.map((c) => {
+    type Row = {
+      cardId: string
+      owned: number
+      inDeck: number
+      remaining: number
+      evolved: boolean
+      key: string
+    }
+    const rows: Row[] = []
+    for (const c of catalog) {
       const owned = inventory[c.id] ?? 0
+      const evolvedOwned = Math.min(evolvedMap[c.id] ?? 0, owned)
+      const normalOwned = owned - evolvedOwned
       const inDeck = deck.cards[c.id] ?? 0
-      const remaining = Math.max(0, owned - inDeck)
-      return { cardId: c.id, owned, inDeck, remaining }
-    })
+      const evoInDeck = Math.min(inDeck, evolvedOwned)
+      const normalInDeck = inDeck - evoInDeck
+
+      if (owned <= 0) {
+        rows.push({
+          cardId: c.id,
+          owned: 0,
+          inDeck: 0,
+          remaining: 0,
+          evolved: false,
+          key: `${c.id}:n`,
+        })
+        continue
+      }
+      if (evolvedOwned > 0) {
+        rows.push({
+          cardId: c.id,
+          owned: evolvedOwned,
+          inDeck: evoInDeck,
+          remaining: Math.max(0, evolvedOwned - evoInDeck),
+          evolved: true,
+          key: `${c.id}:e`,
+        })
+      }
+      if (normalOwned > 0) {
+        rows.push({
+          cardId: c.id,
+          owned: normalOwned,
+          inDeck: normalInDeck,
+          remaining: Math.max(0, normalOwned - normalInDeck),
+          evolved: false,
+          key: `${c.id}:n`,
+        })
+      }
+    }
     rows.sort((a, b) => {
       const ar = a.remaining > 0 ? 1 : 0
       const br = b.remaining > 0 ? 1 : 0
@@ -271,24 +320,64 @@ export function DeckBuilder() {
       const ao = a.owned > 0 ? 1 : 0
       const bo = b.owned > 0 ? 1 : 0
       if (ao !== bo) return bo - ao
-      return a.cardId.localeCompare(b.cardId)
+      const idCmp = a.cardId.localeCompare(b.cardId)
+      if (idCmp !== 0) return idCmp
+      return Number(b.evolved) - Number(a.evolved)
     })
     return rows
-  }, [catalog, inventory, deck.cards])
+  }, [catalog, inventory, evolvedMap, deck.cards])
 
   const deckCopies = useMemo(() => {
-    const copies: { cardId: string; key: string }[] = []
+    const copies: { cardId: string; key: string; evolved: boolean }[] = []
     const ids = Object.keys(deck.cards).sort()
     for (const id of ids) {
       const n = deck.cards[id] ?? 0
+      const evoOwned = Math.min(evolvedMap[id] ?? 0, inventory[id] ?? 0)
+      const evoInDeck = Math.min(n, evoOwned)
       for (let i = 0; i < n; i++) {
-        copies.push({ cardId: id, key: `${id}#${i}` })
+        copies.push({
+          cardId: id,
+          key: `${id}#${i}`,
+          evolved: i < evoInDeck,
+        })
       }
     }
     return copies
-  }, [deck.cards])
+  }, [deck.cards, evolvedMap, inventory])
 
   const previewCard = preview ? CARD_DATABASE.find((c) => c.id === preview) : null
+  const previewOwned = preview ? inventory[preview] ?? 0 : 0
+  const previewEvolvedOwned = preview
+    ? Math.min(evolvedMap[preview] ?? 0, previewOwned)
+    : 0
+  const previewUnevolved = Math.max(0, previewOwned - previewEvolvedOwned)
+  const previewEvoCost = previewCard
+    ? EVO_COST_BY_RARITY[previewCard.rarity]
+    : 0
+  const canEvolvePreview =
+    !!previewCard && previewUnevolved > 0 && gems >= previewEvoCost && !evolving
+
+  const selectPreview = (cardId: string, evolved = false) => {
+    setPreview(cardId)
+    setPreviewEvolved(evolved)
+  }
+
+  const onEvolvePreview = async () => {
+    if (!preview || !canEvolvePreview || evoBusy) return
+    setEvoBusy(true)
+    setHint(null)
+    try {
+      const res = await evolveCard(preview, 1)
+      setPreviewEvolved(true)
+      setHint(
+        `วิวัฒนาการสำเร็จ (−${res.totalCost.toLocaleString('th-TH')} เพชร)`,
+      )
+    } catch (err) {
+      setHint(err instanceof Error ? err.message : 'วิวัฒนาการไม่สำเร็จ')
+    } finally {
+      setEvoBusy(false)
+    }
+  }
 
   const openDeck = (id: string) => {
     setEditingId(id)
@@ -364,7 +453,7 @@ export function DeckBuilder() {
     const { from, cardId } = readPayload(e)
     if (!cardId) return
     if (from === 'catalog') addOne(cardId)
-    setPreview(cardId)
+    selectPreview(cardId, false)
   }
 
   const onDropToCatalog = (e: DragEvent) => {
@@ -373,7 +462,7 @@ export function DeckBuilder() {
     const { from, cardId } = readPayload(e)
     if (!cardId || from !== 'deck') return
     removeOne(cardId)
-    setPreview(cardId)
+    selectPreview(cardId, false)
   }
 
   const hasCardPayload = (e: DragEvent) => {
@@ -683,9 +772,22 @@ export function DeckBuilder() {
               {previewCard && (
                 <>
                   <div className="preview-card-wrap">
-                    <CardView cardId={previewCard.id} size="preview" />
+                    <CardView
+                      cardId={previewCard.id}
+                      size="preview"
+                      evolved={
+                        previewEvolvedOwned > 0 &&
+                        (previewEvolved || previewUnevolved === 0)
+                      }
+                    />
                   </div>
-                  <p className="code">{previewCard.id}</p>
+                  <p className="code">
+                    {previewCard.id}
+                    {previewEvolvedOwned > 0 &&
+                    (previewEvolved || previewUnevolved === 0)
+                      ? ' · Evo'
+                      : ''}
+                  </p>
                   <h2>{previewCard.nameTh}</h2>
                   <p className="en">{previewCard.name}</p>
                   <p className="meta">
@@ -703,6 +805,40 @@ export function DeckBuilder() {
                       : ''}
                   </p>
                   <p className="desc">{previewCard.description}</p>
+                  {previewOwned > 0 && (
+                    <div className="preview-evo">
+                      <p className="preview-evo-count">
+                        คลัง {previewOwned} ใบ
+                        {previewEvolvedOwned > 0
+                          ? ` · Evo ${previewEvolvedOwned}`
+                          : ''}
+                        {previewUnevolved > 0
+                          ? ` · ปกติ ${previewUnevolved}`
+                          : ''}
+                      </p>
+                      {previewUnevolved > 0 ? (
+                        <button
+                          type="button"
+                          className="preview-evo-btn"
+                          disabled={!canEvolvePreview || evoBusy}
+                          onClick={() => void onEvolvePreview()}
+                          title={`วิวัฒนาการ 1 ใบ · ${previewEvoCost.toLocaleString('th-TH')} เพชร`}
+                        >
+                          <Gem size={14} strokeWidth={2.25} aria-hidden />
+                          {evoBusy || evolving
+                            ? 'กำลัง Evo…'
+                            : `Evo · ${previewEvoCost.toLocaleString('th-TH')}`}
+                        </button>
+                      ) : (
+                        <p className="preview-evo-done">วิวัฒนาการครบแล้ว</p>
+                      )}
+                      {previewUnevolved > 0 && gems < previewEvoCost && (
+                        <p className="preview-evo-need">
+                          เพชรไม่พอ (ต้องการ {previewEvoCost.toLocaleString('th-TH')})
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </>
               )}
             </aside>
@@ -731,21 +867,20 @@ export function DeckBuilder() {
                 {deckCopies.map((copy) => (
                   <div
                     key={copy.key}
-                    className="deck-copy"
+                    className={`deck-copy ${copy.evolved ? 'is-evo' : ''}`}
                     draggable
                     onDragStart={(e) => onDragStart(e, copy.cardId, 'deck')}
                     onDragEnd={() => setDragOver(null)}
                     onClick={() => {
-                      setPreview(copy.cardId)
+                      selectPreview(copy.cardId, copy.evolved)
                       if (isCoarsePointer()) removeOne(copy.cardId)
                     }}
                     onDoubleClick={() => {
-                      setPreview(copy.cardId)
+                      selectPreview(copy.cardId, copy.evolved)
                       removeOne(copy.cardId)
                     }}
                     onMouseEnter={() => {
                       if (isCoarsePointer()) return
-                      setPreview(copy.cardId)
                       setHoverKey(`deck:${copy.key}`)
                     }}
                     onMouseLeave={() => setHoverKey(null)}
@@ -754,7 +889,13 @@ export function DeckBuilder() {
                       cardId={copy.cardId}
                       size="small"
                       hideName
-                      selected={hoverKey === `deck:${copy.key}`}
+                      evolved={copy.evolved}
+                      selected={
+                        hoverKey === `deck:${copy.key}` ||
+                        (preview === copy.cardId &&
+                          previewEvolved === copy.evolved &&
+                          hoverKey === null)
+                      }
                     />
                   </div>
                 ))}
@@ -923,14 +1064,15 @@ export function DeckBuilder() {
                   <p className="deck-empty">ไม่พบการ์ดที่ตรงกับคำค้น</p>
                 )}
                 {collectionRows.map((row) => {
-                  const { owned, inDeck, remaining } = row
+                  const { owned, remaining, evolved } = row
+                  const totalInDeck = deck.cards[row.cardId] ?? 0
                   const canAdd =
-                    remaining > 0 && inDeck < MAX_COPIES
+                    remaining > 0 && totalInDeck < MAX_COPIES
                   const unavailable = remaining <= 0
                   return (
                     <div
-                      key={row.cardId}
-                      className={`grid-item ${unavailable ? 'unowned' : ''}`}
+                      key={row.key}
+                      className={`grid-item ${unavailable ? 'unowned' : ''} ${evolved ? 'is-evo' : ''}`}
                       draggable={canAdd}
                       onDragStart={(e) => {
                         if (!canAdd) {
@@ -941,17 +1083,16 @@ export function DeckBuilder() {
                       }}
                       onDragEnd={() => setDragOver(null)}
                       onClick={() => {
-                        setPreview(row.cardId)
+                        selectPreview(row.cardId, evolved)
                         if (isCoarsePointer() && canAdd) addOne(row.cardId)
                       }}
                       onDoubleClick={() => {
-                        setPreview(row.cardId)
+                        selectPreview(row.cardId, evolved)
                         addOne(row.cardId)
                       }}
                       onMouseEnter={() => {
                         if (isCoarsePointer()) return
-                        setPreview(row.cardId)
-                        setHoverKey(`catalog:${row.cardId}`)
+                        setHoverKey(`catalog:${row.key}`)
                       }}
                       onMouseLeave={() => setHoverKey(null)}
                     >
@@ -959,16 +1100,22 @@ export function DeckBuilder() {
                         cardId={row.cardId}
                         size="small"
                         hideName
+                        evolved={evolved}
                         dimmed={unavailable}
-                        selected={hoverKey === `catalog:${row.cardId}`}
+                        selected={
+                          hoverKey === `catalog:${row.key}` ||
+                          (preview === row.cardId &&
+                            previewEvolved === evolved &&
+                            hoverKey === null)
+                        }
                       />
                       {owned > 0 && (
                         <span
-                          className={`qty-badge ${remaining <= 0 ? 'empty' : ''}`}
+                          className={`qty-badge ${remaining <= 0 ? 'empty' : ''} ${evolved ? 'evo' : ''}`}
                           title={
                             remaining > 0
-                              ? `เหลือใส่ได้ ${remaining} / มีในคลัง ${owned}`
-                              : `ใส่ในเด็คครบแล้ว (${inDeck}/${owned})`
+                              ? `${evolved ? 'Evo' : 'ปกติ'} เหลือใส่ได้ ${remaining} / มี ${owned}`
+                              : `${evolved ? 'Evo' : 'ปกติ'} ใส่ครบแล้ว`
                           }
                         >
                           {remaining}

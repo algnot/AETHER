@@ -22,6 +22,8 @@ interface Props {
   showAtk?: boolean
   /** Hide card name on the banner (deck list) */
   hideName?: boolean
+  /** Full-art evolved frame (more art, smaller overlays) */
+  evolved?: boolean
   /** Slept / already attacked — rotate 90° */
   exhausted?: boolean
   /** Attack charge toward target / impact on target */
@@ -30,6 +32,8 @@ interface Props {
   fxOffset?: { x: number; y: number }
   /** Override displayed ATK (e.g. field buffs) */
   atkDisplay?: number
+  /** Override displayed cost (e.g. Dynogr 「คาถา」 discount) */
+  costDisplay?: number
   className?: string
   onClick?: () => void
   onMouseEnter?: () => void
@@ -51,10 +55,12 @@ export function CardView(props: Props) {
     selected,
     dimmed,
     hideName,
+    evolved,
     exhausted,
     fx,
     fxOffset,
     atkDisplay,
+    costDisplay,
     className = '',
     onClick,
     onMouseEnter,
@@ -79,6 +85,12 @@ export function CardView(props: Props) {
 
   const def = getCard(id)
   const shownAtk = atkDisplay ?? def.atk
+  const shownCost =
+    costDisplay !== undefined
+      ? costDisplay
+      : instance?.tempCostOverride !== undefined
+        ? instance.tempCostOverride
+        : def.cost
   const typeClass =
     def.type === 'monster' ? 'monster' : def.type === 'spell' ? 'spell' : 'trap'
   const rarityClass = `rarity-${def.rarity}`
@@ -101,17 +113,21 @@ export function CardView(props: Props) {
   return (
     <button
       type="button"
-      className={`card-shell size-${size} ${rarityClass} ${selected ? 'selected' : ''} ${dimmed ? 'dimmed' : ''} ${hideName ? 'hide-name' : ''} ${exhausted ? 'exhausted' : ''} ${fx ? `fx-${fx}` : ''} ${className}`}
+      className={`card-shell size-${size} ${rarityClass} ${selected ? 'selected' : ''} ${dimmed ? 'dimmed' : ''} ${hideName ? 'hide-name' : ''} ${evolved ? 'is-evo' : ''} ${exhausted ? 'exhausted' : ''} ${fx ? `fx-${fx}` : ''} ${className}`}
       style={fxStyle}
       onClick={onClick}
       onMouseEnter={onMouseEnter}
-      title={`${def.nameTh} · ${RARITY_LABELS[def.rarity]}`}
+      title={`${def.nameTh} · ${RARITY_LABELS[def.rarity]}${evolved ? ' · Evo' : ''}`}
     >
       <div className={`card-face op-frame ${typeClass}`}>
         <div className="op-outer">
           <div className="op-inner">
             <div className="op-cost">
-              <CostBadge cost={def.cost} size="md" variant={def.type} />
+              <CostBadge
+                cost={shownCost}
+                size="md"
+                variant={def.type}
+              />
             </div>
 
             <div className="op-faction" title={def.tribe ?? def.type}>
@@ -127,13 +143,17 @@ export function CardView(props: Props) {
                   <span className="op-foil op-foil-sparkle" aria-hidden />
                 </>
               )}
-              <span
-                className={`op-rarity rarity-${def.rarity}`}
-                title={RARITY_LABELS[def.rarity]}
-              >
-                {def.rarity}
-              </span>
-              <span className="op-code">{def.id}</span>
+              {!evolved && (
+                <>
+                  <span
+                    className={`op-rarity rarity-${def.rarity}`}
+                    title={RARITY_LABELS[def.rarity]}
+                  >
+                    {def.rarity}
+                  </span>
+                  <span className="op-code">{def.id}</span>
+                </>
+              )}
             </div>
 
             <div className="op-textbox">
@@ -154,7 +174,12 @@ export function CardView(props: Props) {
                 )}
                 <div className="op-banner-mid">
                   {!hideName && (
-                    <FitText text={def.nameTh} className="op-name" maxPx={14} minPx={7} />
+                    <FitText
+                      text={def.nameTh}
+                      className="op-name"
+                      maxPx={evolved ? 12 : 14}
+                      minPx={6}
+                    />
                   )}
                 </div>
               </div>

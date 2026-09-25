@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jsonError, userIdFromRequest } from '@/lib/auth'
 import { connectDb } from '@/lib/db'
-import { getGachaBox, remainingInBox } from '@/data/gachaBoxes'
+import { getGachaBox, remainingInBox, canOpenGacha } from '@/data/gachaBoxes'
 import { reboxProgress } from '@/lib/gacha'
 import { getBoxProgress, setBoxProgress, User } from '@/lib/models/User'
 
@@ -19,6 +19,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     await connectDb()
     const user = await User.findById(userId)
     if (!user) return jsonError('ไม่พบผู้ใช้', 401)
+    if (!canOpenGacha(box, user)) {
+      return jsonError('กล่องนี้ยังไม่เปิดให้สุ่ม — ไม่ต้อง Rebox', 403)
+    }
 
     const progress = getBoxProgress(user, box.id)
     const next = reboxProgress(progress)

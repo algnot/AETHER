@@ -65,6 +65,7 @@ export async function POST(req: NextRequest) {
 
     user.gems = (user.gems ?? 0) + plan.totalGems
     user.markModified('inventory')
+    user.markModified('evolved')
     await user.save()
 
     return NextResponse.json({

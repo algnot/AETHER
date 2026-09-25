@@ -28,6 +28,8 @@ export type GachaBoxView = {
   rareRates: { R: number; SR: number; UR: number }
   pool: { C: number; R: number; SR: number; UR: number; total: number }
   progress: BoxProgressView
+  /** false = browse catalog only (no pack opening) */
+  gachaEnabled?: boolean
 }
 
 export type GachaPullCard = { cardId: string; rarity: Rarity }

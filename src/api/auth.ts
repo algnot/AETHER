@@ -4,10 +4,12 @@ export type AuthUser = {
   id: string
   username: string
   inventory: Record<string, number>
+  evolved: Record<string, number>
   coins: number
   gems: number
   dailyStreak: number
   canClaimDaily: boolean
+  isDev: boolean
 }
 
 type AuthResponse = { token: string; user: AuthUser }
@@ -110,4 +112,26 @@ export async function apiSalvageExcess(token: string): Promise<SalvageResponse> 
     headers: authHeaders(token),
   })
   return parseJson<SalvageResponse>(res)
+}
+
+type EvolveResponse = {
+  cardId: string
+  amount: number
+  costEach: number
+  totalCost: number
+  rarity: string
+  user: AuthUser
+}
+
+export async function apiEvolveCard(
+  token: string,
+  cardId: string,
+  amount = 1,
+): Promise<EvolveResponse> {
+  const res = await fetch('/api/economy/evolve', {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({ cardId, amount }),
+  })
+  return parseJson<EvolveResponse>(res)
 }

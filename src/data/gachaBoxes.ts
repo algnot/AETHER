@@ -1,6 +1,6 @@
 import type { Rarity } from '../types/game'
 
-export type GachaBoxId = 'S00'
+export type GachaBoxId = 'S00' | 'S01' | 'S02'
 
 export type GachaBoxDef = {
   id: GachaBoxId
@@ -22,6 +22,11 @@ export type GachaBoxDef = {
   packCost: number
   /** Soft rates for the rare slot (before pity) — must sum to 1 */
   rareRates: { R: number; SR: number; UR: number }
+  /**
+   * When false, the box is catalog-only: players can browse cards but cannot
+   * open packs / rebox. Default true.
+   */
+  gachaEnabled?: boolean
 }
 
 export const GACHA_BOXES: Record<GachaBoxId, GachaBoxDef> = {
@@ -40,13 +45,61 @@ export const GACHA_BOXES: Record<GachaBoxId, GachaBoxDef> = {
     packCost: 20,
     // Expected over 20 packs ≈ 14 R / 4 SR / 2 UR
     rareRates: { R: 0.7, SR: 0.2, UR: 0.1 },
+    gachaEnabled: true,
+  },
+  S01: {
+    id: 'S01',
+    name: 'The Magic of Aether',
+    nameTh: 'The Magic of Aether',
+    prefix: 'S01',
+    coverArt: '/gacha/box-s01-pack.png',
+    backgroundArt: '/gacha/box-s01-bg.png',
+    packsPerBox: 20,
+    cardsPerPack: 5,
+    commonsPerPack: 4,
+    urPerBox: 0,
+    srPerBox: 6,
+    packCost: 20,
+    rareRates: { R: 0.65, SR: 0.35, UR: 0 },
+    gachaEnabled: false,
+  },
+  /** @deprecated Prefer S01 — kept so old progress keys still resolve */
+  S02: {
+    id: 'S02',
+    name: 'The Magic of Aether',
+    nameTh: 'The Magic of Aether',
+    prefix: 'S01',
+    coverArt: '/gacha/box-s01-pack.png',
+    backgroundArt: '/gacha/box-s01-bg.png',
+    packsPerBox: 20,
+    cardsPerPack: 5,
+    commonsPerPack: 4,
+    urPerBox: 0,
+    srPerBox: 6,
+    packCost: 20,
+    rareRates: { R: 0.65, SR: 0.35, UR: 0 },
+    gachaEnabled: false,
   },
 }
 
-export const GACHA_BOX_LIST: GachaBoxDef[] = Object.values(GACHA_BOXES)
+/** Boxes shown in the gacha carousel */
+export const GACHA_BOX_LIST: GachaBoxDef[] = [GACHA_BOXES.S00, GACHA_BOXES.S01]
 
 export function getGachaBox(boxId: string): GachaBoxDef | null {
   return (GACHA_BOXES as Record<string, GachaBoxDef>)[boxId] ?? null
+}
+
+export function isGachaEnabled(box: GachaBoxDef): boolean {
+  return box.gachaEnabled !== false
+}
+
+/** Public gacha OR the account has Mongo `is_dev: true`. */
+export function canOpenGacha(
+  box: GachaBoxDef,
+  user?: { is_dev?: boolean; isDev?: boolean } | null,
+): boolean {
+  if (isGachaEnabled(box)) return true
+  return !!(user?.is_dev || user?.isDev)
 }
 
 export function cardBelongsToBox(cardId: string, box: GachaBoxDef): boolean {

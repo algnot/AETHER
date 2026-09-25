@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import {
   apiClaimDaily,
+  apiEvolveCard,
   apiLogin,
   apiMe,
   apiRegister,
@@ -20,6 +21,7 @@ interface AuthStore {
   dailyMessage: string | null
   claimingDaily: boolean
   salvaging: boolean
+  evolving: boolean
   boot: () => Promise<void>
   login: (username: string, password: string) => Promise<void>
   register: (username: string, password: string) => Promise<void>
@@ -28,8 +30,13 @@ interface AuthStore {
   clearDailyMessage: () => void
   claimDaily: () => Promise<void>
   salvageExcess: () => Promise<{ totalCards: number; totalGems: number }>
+  evolveCard: (
+    cardId: string,
+    amount?: number,
+  ) => Promise<{ totalCost: number; amount: number }>
   patchUser: (user: AuthUser) => void
   ownedCount: (cardId: string) => number
+  evolvedCount: (cardId: string) => number
 }
 
 function normalizeUser(user: AuthUser): AuthUser {
@@ -38,8 +45,10 @@ function normalizeUser(user: AuthUser): AuthUser {
     coins: user.coins ?? 0,
     gems: user.gems ?? 0,
     inventory: user.inventory ?? {},
+    evolved: user.evolved ?? {},
     dailyStreak: user.dailyStreak ?? 0,
     canClaimDaily: user.canClaimDaily ?? false,
+    isDev: user.isDev ?? false,
   }
 }
 
@@ -51,6 +60,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   dailyMessage: null,
   claimingDaily: false,
   salvaging: false,
+  evolving: false,
 
   boot: async () => {
     const token = getStoredToken()
@@ -136,5 +146,25 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     }
   },
 
+  evolveCard: async (cardId, amount = 1) => {
+    const token = get().token
+    if (!token || get().evolving) {
+      throw new Error('ยังไม่พร้อมวิวัฒนาการ')
+    }
+    set({ evolving: true, error: null })
+    try {
+      const res = await apiEvolveCard(token, cardId, amount)
+      set({
+        user: normalizeUser(res.user),
+        evolving: false,
+      })
+      return { totalCost: res.totalCost, amount: res.amount }
+    } catch (err) {
+      set({ evolving: false })
+      throw err
+    }
+  },
+
   ownedCount: (cardId) => get().user?.inventory[cardId] ?? 0,
+  evolvedCount: (cardId) => get().user?.evolved?.[cardId] ?? 0,
 }))

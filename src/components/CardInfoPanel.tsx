@@ -1,5 +1,5 @@
 import { getCard } from '../data/cards'
-import { getAtkBreakdown } from '../engine/gameEngine'
+import { getAtkBreakdown, getEffectiveCost, isKataSpellOrTrap } from '../engine/gameEngine'
 import { useAppStore } from '../store/gameStore'
 import { CARD_TYPE_LABELS, RARITY_LABELS, TRIBE_LABELS } from '../types/game'
 import { CardView } from './CardView'
@@ -11,6 +11,7 @@ import {
   TribeIcon,
 } from './GameIcons'
 import './CardInfoPanel.css'
+import type { CardInstance } from '../types/game'
 
 interface Props {
   cardId: string | null
@@ -31,6 +32,26 @@ export function CardInfoPanel({ cardId, compact }: Props) {
 
   const card = getCard(cardId)
   const baseAtk = card.type === 'monster' ? card.atk : undefined
+
+  const displayCost = (() => {
+    if (!game || !isKataSpellOrTrap(cardId)) return card.cost
+    const findInHand = (owner: 'player' | 'opponent'): CardInstance | undefined =>
+      game.players[owner].hand.find((c) => c.cardId === cardId)
+    const inPlayer = findInHand('player')
+    if (inPlayer) return getEffectiveCost(inPlayer, game, 'player')
+    const inOpp = findInHand('opponent')
+    if (inOpp) return getEffectiveCost(inOpp, game, 'opponent')
+    // Preview with field Dynogr even if not in hand
+    const stub: CardInstance = {
+      instanceId: 'preview',
+      cardId,
+      canAttack: false,
+      hasAttacked: false,
+      summonTurn: 0,
+    }
+    const playerCost = getEffectiveCost(stub, game, 'player')
+    return playerCost !== card.cost ? playerCost : card.cost
+  })()
 
   const breakdown =
     game && baseAtk !== undefined
@@ -65,7 +86,7 @@ export function CardInfoPanel({ cardId, compact }: Props) {
 
         <div className="info-icon-row">
           <div className="icon-stat" title="ค่าร่าย">
-            <CostBadge cost={card.cost} size="lg" />
+            <CostBadge cost={displayCost} size="lg" />
             <span className="icon-label">ค่าร่าย</span>
           </div>
 

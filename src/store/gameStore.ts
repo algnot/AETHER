@@ -6,6 +6,11 @@ import {
   advancePhase,
   canAttack,
   canActivateSoluy,
+  canActivateShorin,
+  canActivateAgatha,
+  canActivateNoah,
+  canActivateSaruka,
+  canActivateRyuka,
   canAlkataHandSummon,
   canPlaySpell,
   canReinforceSummon,
@@ -18,7 +23,26 @@ import {
   createTutorialGame,
   confirmEmergencySummon,
   beginSoluySwap,
+  beginShorinSearch,
+  beginAgathaSearch,
+  beginNoahMill,
+  beginSarukaSearch,
+  beginRyukaFetch,
   cancelAlkataDebuff,
+  cancelShorinSearch,
+  cancelAgathaSearch,
+  cancelNoahMill,
+  cancelSarukaSearch,
+  cancelRyukaFetch,
+  cancelRyukaSleep,
+  pickGuardianTarget,
+  cancelGuardianPick,
+  pickBuddyTarget,
+  cancelBuddyPick,
+  pickHypnosisTarget,
+  pickTeleportSummon,
+  cancelTeleportPick,
+  cancelHypnosisPick,
   pickAlkataDebuff,
   pickAlkataGyRecover,
   pickAlkataHandSummon,
@@ -46,6 +70,13 @@ import {
   skipAlkataCallSummon,
   isAlkataGod,
   pickSoluyBounce,
+  pickShorinSearch,
+  pickSarukaDiscard,
+  pickSarukaSearch,
+  pickRyukaFetch,
+  pickRyukaSleep,
+  pickAgathaSearch,
+  pickNoahMill,
   pickSoraDestroy,
   pickSoulDrainSacrifice,
   pickSoulDrainTarget,
@@ -65,7 +96,7 @@ import {
   skipAlkataDeckSearch,
   skipAlkataMinaSummon,
   skipSignalAmp,
-  stageSpell,
+  offerOrStageSpell,
   summonMonster,
 } from '../engine/gameEngine'
 import type { GameScreen, PlayerId } from '../types/game'
@@ -139,6 +170,27 @@ interface AppStore {
   pickMinaCard: (instanceId: string) => void
   skipMina: () => void
   cancelSoluy: () => void
+  pickShorinCard: (instanceId: string, from: 'deck' | 'graveyard') => void
+  cancelShorin: () => void
+  pickSarukaDiscardCard: (instanceId: string) => void
+  pickSarukaCard: (instanceId: string, from: 'deck' | 'graveyard') => void
+  cancelSaruka: () => void
+  pickRyukaCard: (instanceId: string) => void
+  cancelRyuka: () => void
+  pickRyukaSleepMonster: (instanceId: string) => void
+  cancelRyukaSleepPick: () => void
+  pickAgathaCard: (instanceId: string) => void
+  cancelAgatha: () => void
+  pickNoahCard: (instanceId: string) => void
+  cancelNoah: () => void
+  pickGuardianMonster: (instanceId: string) => void
+  cancelGuardian: () => void
+  pickBuddyMonster: (instanceId: string) => void
+  cancelBuddy: () => void
+  pickHypnosisMonster: (instanceId: string) => void
+  cancelHypnosis: () => void
+  pickTeleportCard: (instanceId: string, from: 'deck' | 'graveyard') => void
+  cancelTeleport: () => void
   confirmSolaPay: (pay: 'energy' | 'hp') => void
   cancelSolaPay: () => void
   skipBetaExtra: () => void
@@ -168,12 +220,29 @@ function runSpellCast(
   set: (p: Partial<AppStore>) => void,
   owner: PlayerId,
   instanceId: string,
+  opts?: { skipIntercept?: boolean },
 ) {
   const { game } = get()
   if (!game) return
-  const staged = stageSpell(game, owner, instanceId)
-  if (staged === game) return
 
+  const afterStage = offerOrStageSpell(game, owner, instanceId, opts)
+  if (afterStage === game) return
+
+  // Opponent (or we) may counter before the spell is staged
+  if (
+    afterStage.awaitingTrap &&
+    afterStage.interaction.type === 'trap_response' &&
+    afterStage.interaction.threat.window === 'on_activate'
+  ) {
+    set({ game: afterStage, castFx: null, aiThinking: false })
+    const responder = owner === 'player' ? 'opponent' : 'player'
+    if (responder === 'opponent') {
+      setTimeout(() => get().tickAi(), AI_STEP_MS)
+    }
+    return
+  }
+
+  const staged = afterStage
   set({
     game: staged,
     castFx: { owner, instanceId, kind: 'spell' },
@@ -197,7 +266,11 @@ function runSpellCast(
       effectId === 'signal_amplifier' ||
       effectId === 'emergency_reinforce' ||
       effectId === 'alkata_call' ||
-      effectId === 'alkata_plot'
+      effectId === 'alkata_plot' ||
+      effectId === 'kata_guardian' ||
+      effectId === 'kata_buddy' ||
+      effectId === 'kata_hypnosis' ||
+      effectId === 'kata_blink'
     ) {
       set({ castFx: null, aiThinking: false })
       const g2 = get().game
@@ -249,27 +322,59 @@ function runTrapActivate(
   const { game } = get()
   if (!game) return
 
+  const finishTrapResult = (next: typeof game) => {
+    if (!next) return
+    set({ game: next, castFx: null, aiThinking: false })
+    if (next.winner) {
+      set({ screen: 'result' })
+      return
+    }
+    if (next.interaction.type === 'resume_spell_cast') {
+      const { ownerId, instanceId } = next.interaction
+      set({
+        game: { ...next, interaction: { type: 'idle' } },
+      })
+      runSpellCast(get, set, ownerId, instanceId, { skipIntercept: true })
+      return
+    }
+    if (
+      next.awaitingTrap &&
+      next.interaction.type === 'trap_response' &&
+      next.interaction.threat.window === 'on_activate'
+    ) {
+      // Offered intercept to the other player — wait for them / AI
+      const activator = next.interaction.threat.activatorId ?? owner
+      const responder = activator === 'player' ? 'opponent' : 'player'
+      if (responder === 'opponent') {
+        setTimeout(() => get().tickAi(), AI_STEP_MS)
+      }
+      return
+    }
+    afterPlayerMove(get)
+  }
+
   if (!use) {
     const next = respondTrap(game, owner, false)
-    set({ game: next, castFx: null })
-    if (next.winner) set({ screen: 'result' })
-    afterPlayerMove(get)
+    finishTrapResult(next)
     return
   }
 
   const revealed = revealTrap(game, owner, trapInstanceId)
   if (!revealed) {
     const next = respondTrap(game, owner, false)
-    set({ game: next })
-    if (next.winner) set({ screen: 'result' })
-    afterPlayerMove(get)
+    finishTrapResult(next)
     return
   }
 
   const trapOnField = revealed.players[owner].spellTrap.find((c) => {
     if (c.faceDown) return false
     const id = getCard(c.cardId).effectId
-    return id === 'light_shield' || id === 'death_blast'
+    return (
+      id === 'light_shield' ||
+      id === 'death_blast' ||
+      id === 'kata_barrier' ||
+      id === 'kata_intercept'
+    )
   })
 
   set({
@@ -284,9 +389,7 @@ function runTrapActivate(
     const g = get().game
     if (!g) return
     const next = respondTrap(g, owner, true, trapOnField?.instanceId)
-    set({ game: next, castFx: null, aiThinking: false })
-    if (next.winner) set({ screen: 'result' })
-    afterPlayerMove(get)
+    finishTrapResult(next)
   }, CAST_MS)
 }
 
@@ -556,6 +659,163 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ game: cancelSoluySwap(game) })
   },
 
+  pickShorinCard: (instanceId, from) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickShorinSearch(game, 'player', instanceId, from)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  cancelShorin: () => {
+    const { game } = get()
+    if (!game || game.interaction.type !== 'shorin_search') return
+    set({ game: cancelShorinSearch(game) })
+  },
+
+  pickSarukaDiscardCard: (instanceId) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickSarukaDiscard(game, 'player', instanceId)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  pickSarukaCard: (instanceId, from) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickSarukaSearch(game, 'player', instanceId, from)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  cancelSaruka: () => {
+    const { game } = get()
+    if (!game || game.interaction.type !== 'saruka_search') return
+    set({ game: cancelSarukaSearch(game) })
+  },
+
+  pickRyukaCard: (instanceId) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickRyukaFetch(game, 'player', instanceId)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  cancelRyuka: () => {
+    const { game } = get()
+    if (!game || game.interaction.type !== 'ryuka_fetch') return
+    set({ game: cancelRyukaFetch(game) })
+  },
+
+  pickRyukaSleepMonster: (instanceId) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickRyukaSleep(game, 'player', instanceId)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  cancelRyukaSleepPick: () => {
+    const { game } = get()
+    if (!game || game.interaction.type !== 'ryuka_sleep') return
+    set({ game: cancelRyukaSleep(game) })
+    afterPlayerMove(get)
+  },
+
+  pickAgathaCard: (instanceId) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickAgathaSearch(game, 'player', instanceId)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  cancelAgatha: () => {
+    const { game } = get()
+    if (!game || game.interaction.type !== 'agatha_search') return
+    set({ game: cancelAgathaSearch(game) })
+  },
+
+  pickNoahCard: (instanceId) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickNoahMill(game, 'player', instanceId)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  cancelNoah: () => {
+    const { game } = get()
+    if (!game || game.interaction.type !== 'noah_mill') return
+    set({ game: cancelNoahMill(game) })
+  },
+
+  pickGuardianMonster: (instanceId) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickGuardianTarget(game, 'player', instanceId)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  cancelGuardian: () => {
+    const { game } = get()
+    if (!game || game.interaction.type !== 'guardian_pick') return
+    set({ game: cancelGuardianPick(game) })
+    afterPlayerMove(get)
+  },
+
+  pickBuddyMonster: (instanceId) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickBuddyTarget(game, 'player', instanceId)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  cancelBuddy: () => {
+    const { game } = get()
+    if (!game || game.interaction.type !== 'buddy_pick') return
+    set({ game: cancelBuddyPick(game) })
+    afterPlayerMove(get)
+  },
+
+  pickHypnosisMonster: (instanceId) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickHypnosisTarget(game, 'player', instanceId)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  cancelHypnosis: () => {
+    const { game } = get()
+    if (!game || game.interaction.type !== 'hypnosis_pick') return
+    set({ game: cancelHypnosisPick(game) })
+    afterPlayerMove(get)
+  },
+
+  pickTeleportCard: (instanceId, from) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickTeleportSummon(game, 'player', instanceId, from)
+    set({ game: next })
+    if (next.winner) {
+      set({ screen: 'result' })
+      return
+    }
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  cancelTeleport: () => {
+    const { game } = get()
+    if (!game || game.interaction.type !== 'teleport_pick') return
+    set({ game: cancelTeleportPick(game) })
+    afterPlayerMove(get)
+  },
+
   confirmSolaPay: (pay) => {
     const { game, castFx, battleFx } = get()
     if (!game || castFx || battleFx) return
@@ -816,14 +1076,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     if (game.awaitingTrap && game.interaction.type === 'trap_response') {
-      const need =
-        game.interaction.threat.window === 'on_attack'
-          ? 'death_blast'
-          : 'light_shield'
+      const threat = game.interaction.threat
+      const allowBarrier =
+        threat.window === 'on_attack' &&
+        threat.targetInstanceId !== 'direct' &&
+        (() => {
+          const mon = game.players.player.field.find(
+            (m) => m?.instanceId === threat.targetInstanceId,
+          )
+          return !!mon && getCard(mon.cardId).tribe === 'mage'
+        })()
       const card =
         game.players.player.hand.find((c) => c.instanceId === instanceId) ??
         game.players.player.spellTrap.find((c) => c.instanceId === instanceId)
-      if (!card || getCard(card.cardId).effectId !== need) return
+      if (!card) return
+      const effectId = getCard(card.cardId).effectId
+      const ok =
+        (threat.window === 'on_attack' &&
+          (effectId === 'death_blast' ||
+            (effectId === 'kata_barrier' && allowBarrier))) ||
+        (threat.window === 'on_destroy' && effectId === 'light_shield') ||
+        (threat.window === 'on_activate' && effectId === 'kata_intercept')
+      if (!ok) return
       runTrapActivate(get, set, 'player', true, instanceId)
       return
     }
@@ -864,6 +1138,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
       const next = discardForSara(game, 'player', instanceId)
       set({ game: next })
       if (next.interaction.type === 'mina_recruit' || next.interaction.type === 'sara_discard' || next.interaction.type === 'omega_search' || next.interaction.type === 'alkata_deck_search' || next.interaction.type === 'alkata_mina_summon' || next.interaction.type === 'sora_destroy' || next.interaction.type === 'alkata_debuff') return
+      if (next.interaction.type === 'idle') afterPlayerMove(get)
+      return
+    }
+
+    if (
+      game.interaction.type === 'saruka_search' &&
+      game.interaction.step === 'discard' &&
+      game.interaction.ownerId === 'player'
+    ) {
+      const next = pickSarukaDiscard(game, 'player', instanceId)
+      set({ game: next })
       if (next.interaction.type === 'idle') afterPlayerMove(get)
       return
     }
@@ -1158,12 +1443,88 @@ export const useAppStore = create<AppStore>((set, get) => ({
 
     if (
       owner === 'player' &&
+      game.interaction.type === 'guardian_pick' &&
+      game.interaction.ownerId === 'player'
+    ) {
+      const next = pickGuardianTarget(game, 'player', instanceId)
+      set({ game: next })
+      if (next.interaction.type === 'idle') afterPlayerMove(get)
+      return
+    }
+
+    if (
+      owner === 'player' &&
+      game.interaction.type === 'buddy_pick' &&
+      game.interaction.ownerId === 'player'
+    ) {
+      const next = pickBuddyTarget(game, 'player', instanceId)
+      set({ game: next })
+      if (next.interaction.type === 'idle') afterPlayerMove(get)
+      return
+    }
+
+    if (
+      owner === 'opponent' &&
+      game.interaction.type === 'hypnosis_pick' &&
+      game.interaction.ownerId === 'player'
+    ) {
+      const next = pickHypnosisTarget(game, 'player', instanceId)
+      set({ game: next })
+      if (next.interaction.type === 'idle') afterPlayerMove(get)
+      return
+    }
+
+    if (
+      owner === 'opponent' &&
+      game.interaction.type === 'ryuka_sleep' &&
+      game.interaction.ownerId === 'player'
+    ) {
+      const next = pickRyukaSleep(game, 'player', instanceId)
+      set({ game: next })
+      if (next.interaction.type === 'idle') afterPlayerMove(get)
+      return
+    }
+
+    if (
+      owner === 'player' &&
       (game.phase === 'main1' || game.phase === 'main2') &&
       game.activePlayer === 'player' &&
       game.interaction.type === 'idle'
     ) {
+      const startEffect = (
+        next: NonNullable<typeof game>,
+      ) => {
+        set({ game: next })
+        if (
+          next.awaitingTrap &&
+          next.interaction.type === 'trap_response' &&
+          next.interaction.threat.window === 'on_activate'
+        ) {
+          setTimeout(() => get().tickAi(), AI_STEP_MS)
+        }
+      }
       if (canActivateSoluy(game, 'player', instanceId)) {
-        set({ game: beginSoluySwap(game, 'player', instanceId) })
+        startEffect(beginSoluySwap(game, 'player', instanceId))
+        return
+      }
+      if (canActivateShorin(game, 'player', instanceId)) {
+        startEffect(beginShorinSearch(game, 'player', instanceId))
+        return
+      }
+      if (canActivateSaruka(game, 'player', instanceId)) {
+        startEffect(beginSarukaSearch(game, 'player', instanceId))
+        return
+      }
+      if (canActivateRyuka(game, 'player', instanceId)) {
+        startEffect(beginRyukaFetch(game, 'player', instanceId))
+        return
+      }
+      if (canActivateAgatha(game, 'player', instanceId)) {
+        startEffect(beginAgathaSearch(game, 'player', instanceId))
+        return
+      }
+      if (canActivateNoah(game, 'player', instanceId)) {
+        startEffect(beginNoahMill(game, 'player', instanceId))
         return
       }
       return
@@ -1313,7 +1674,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     if (game.awaitingTrap && game.interaction.type === 'trap_response') {
-      // Attacker is active; defender answers. Wait for player when they defend.
+      const threat = game.interaction.threat
+      if (threat.window === 'on_activate') {
+        const activator = threat.activatorId ?? 'opponent'
+        const responder = activator === 'player' ? 'opponent' : 'player'
+        if (responder === 'player') return
+        runTrapActivate(get, set, 'opponent', true)
+        return
+      }
+      // Attack/destroy: attacker is active; defender answers.
+      // Wait for player when they defend (CPU is attacking).
       if (game.activePlayer === 'opponent') return
       runTrapActivate(get, set, 'opponent', true)
       return
@@ -1435,6 +1805,16 @@ export const useAppStore = create<AppStore>((set, get) => ({
         game.interaction.type === 'sora_destroy' ||
         game.interaction.type === 'omega_search' ||
         game.interaction.type === 'soluy_swap' ||
+        game.interaction.type === 'shorin_search' ||
+        game.interaction.type === 'saruka_search' ||
+        game.interaction.type === 'ryuka_fetch' ||
+        game.interaction.type === 'ryuka_sleep' ||
+        game.interaction.type === 'agatha_search' ||
+        game.interaction.type === 'noah_mill' ||
+        game.interaction.type === 'guardian_pick' ||
+        game.interaction.type === 'buddy_pick' ||
+        game.interaction.type === 'hypnosis_pick' ||
+        game.interaction.type === 'teleport_pick' ||
         game.interaction.type === 'alkata_gy_recover' ||
         game.interaction.type === 'alkata_hand_summon' ||
         game.interaction.type === 'alkata_debuff' ||
@@ -2187,6 +2567,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
     const me = game.players.opponent
     const probe = action(game)
 
+    // AI opened an activation-counter window for the player — wait
+    if (
+      probe.awaitingTrap &&
+      probe.interaction.type === 'trap_response' &&
+      probe.interaction.threat.window === 'on_activate'
+    ) {
+      const activator = probe.interaction.threat.activatorId ?? 'opponent'
+      const responder = activator === 'player' ? 'opponent' : 'player'
+      set({ game: probe, aiThinking: false })
+      if (responder === 'opponent') {
+        setTimeout(() => get().tickAi(), AI_STEP_MS)
+      }
+      return
+    }
+
     // Spell staged on strip
     const stagedSpell = probe.players.opponent.spellTrap.find((c) => {
       const was = me.spellTrap.some((x) => x.instanceId === c.instanceId)
@@ -2216,7 +2611,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
             getCard(still.cardId).effectId === 'signal_amplifier' ||
             getCard(still.cardId).effectId === 'emergency_reinforce' ||
             getCard(still.cardId).effectId === 'alkata_call' ||
-            getCard(still.cardId).effectId === 'alkata_plot')
+            getCard(still.cardId).effectId === 'alkata_plot' ||
+            getCard(still.cardId).effectId === 'kata_guardian' ||
+            getCard(still.cardId).effectId === 'kata_buddy' ||
+            getCard(still.cardId).effectId === 'kata_hypnosis' ||
+            getCard(still.cardId).effectId === 'kata_blink')
         ) {
           set({ castFx: null, aiThinking: false })
           setTimeout(() => get().tickAi(), AI_STEP_MS)

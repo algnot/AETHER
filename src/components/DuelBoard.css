@@ -486,6 +486,25 @@ button.coach-aim.direct-btn {
   height: calc(var(--bh) * var(--s));
 }
 
+.st-continuous-turns {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  z-index: 5;
+  min-width: 1.1rem;
+  height: 1.1rem;
+  padding: 0 0.2rem;
+  border-radius: 0.2rem;
+  background: rgba(28, 22, 48, 0.88);
+  color: #e8dff8;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 1.1rem;
+  text-align: center;
+  pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(180, 150, 220, 0.45);
+}
+
 .hand-wrap {
   display: flex;
 }
@@ -637,6 +656,12 @@ button.coach-aim.direct-btn {
 
 .zone .card-shell.exhausted {
   margin: 0;
+}
+
+.zone .card-shell.field-locked {
+  outline: 2px solid rgba(180, 140, 255, 0.9);
+  outline-offset: 2px;
+  box-shadow: 0 0 14px rgba(140, 100, 220, 0.5);
 }
 
 .opp-hand,
@@ -1200,6 +1225,15 @@ button.coach-aim.direct-btn {
   padding: 36px;
   text-align: center;
   color: #6a7a8a;
+}
+
+.gy-section-label {
+  margin: 10px 4px 6px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8a9aab;
 }
 
 .gy-grid {

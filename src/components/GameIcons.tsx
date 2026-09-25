@@ -8,6 +8,7 @@ import {
   Flame,
   Skull,
   Sword,
+  WandSparkles,
   Zap,
 } from 'lucide-react'
 import type { CardType, Tribe } from '../types/game'
@@ -70,6 +71,7 @@ const TRIBE_ICONS: Record<Tribe, LucideIcon> = {
   warrior: Sword,
   robot: Bot,
   god: Crown,
+  mage: WandSparkles,
 }
 
 export function TribeIcon({

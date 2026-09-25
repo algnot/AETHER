@@ -588,6 +588,144 @@
   justify-content: space-between;
 }
 
+/* —— Evolved full-art: more art, minimal overlays —— */
+.card-shell.is-evo .op-art {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  flex: 1 1 auto;
+}
+
+.card-shell.is-evo .op-textbox {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 26px;
+  z-index: 3;
+  margin: 0;
+  padding: 2px 3px;
+  min-height: 0;
+  max-height: none;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  pointer-events: none;
+}
+
+.card-shell.is-evo .op-textbox p {
+  font-size: 8px;
+  line-height: 1.25;
+  color: #fff;
+  text-shadow:
+    0 0 3px rgba(0, 0, 0, 0.95),
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 8px rgba(0, 0, 0, 0.75);
+  -webkit-line-clamp: 2;
+}
+
+.card-shell.is-evo .op-banner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  margin: 0;
+  padding: 3px 5px 4px;
+  background: transparent;
+  pointer-events: none;
+}
+
+.card-shell.is-evo .op-atk {
+  min-width: 28px;
+  width: 28px;
+  height: 28px;
+  justify-content: center;
+  gap: 0;
+  border-radius: 50%;
+  font-size: 13px;
+  font-weight: 900;
+  color: #fff;
+  background: radial-gradient(circle at 35% 30%, #d4a574, #8b5a2b 55%, #4a2e10 100%);
+  border: 2px solid #e8c89a;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+}
+
+.card-shell.is-evo .op-atk .gicon {
+  display: none;
+}
+
+.card-shell.is-evo .op-atk.type-icon {
+  min-width: 28px;
+  width: 28px;
+  height: 28px;
+  background: radial-gradient(circle at 35% 30%, #8ec4ff, #2f6fb5 55%, #143a6a 100%);
+  border-color: #c8e0ff;
+}
+
+.card-shell.is-evo .card-face.trap .op-atk.type-icon {
+  background: radial-gradient(circle at 35% 30%, #d4a0f0, #7a3d9b 55%, #3a1858 100%);
+  border-color: #e8c8ff;
+}
+
+.card-shell.is-evo .op-atk.type-icon .gicon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.55));
+}
+
+.card-shell.is-evo .op-name {
+  color: #fff;
+  font-size: 11px;
+  text-shadow:
+    0 0 3px rgba(0, 0, 0, 0.95),
+    0 1px 2px rgba(0, 0, 0, 0.9),
+    0 0 8px rgba(0, 0, 0, 0.7);
+}
+
+.card-shell.is-evo.size-small .op-textbox,
+.card-shell.is-evo.size-tiny .op-textbox {
+  display: none;
+}
+
+.card-shell.is-evo.size-small .op-banner {
+  bottom: 0;
+  padding: 2px 3px 3px;
+}
+
+.card-shell.is-evo.size-small .op-atk,
+.card-shell.is-evo.size-small .op-atk.type-icon {
+  min-width: 22px;
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+  border-width: 1.5px;
+}
+
+.card-shell.is-evo.size-tiny .op-banner {
+  padding: 1px 2px 2px;
+}
+
+.card-shell.is-evo.size-tiny .op-atk,
+.card-shell.is-evo.size-tiny .op-atk.type-icon {
+  min-width: 18px;
+  width: 18px;
+  height: 18px;
+  font-size: 9px;
+  border-width: 1px;
+}
+
+.card-shell.is-evo .op-outer {
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.45),
+    0 0 0 1.5px rgba(255, 200, 90, 0.55),
+    0 0 12px rgba(255, 170, 60, 0.35),
+    inset 0 0 0 1px rgba(255, 240, 200, 0.55);
+}
+
 .card-shell.exhausted {
   transform: rotate(-90deg);
   transform-origin: center center;

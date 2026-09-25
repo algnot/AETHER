@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jsonError, userIdFromRequest } from '@/lib/auth'
 import { connectDb } from '@/lib/db'
-import { getGachaBox, remainingInBox } from '@/data/gachaBoxes'
+import { getGachaBox, remainingInBox, canOpenGacha } from '@/data/gachaBoxes'
 import { boxPoolSummary } from '@/lib/gacha'
 import { getBoxProgress, User } from '@/lib/models/User'
 
@@ -37,6 +37,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
         rareRates: box.rareRates,
         pool: boxPoolSummary(box),
         progress: remainingInBox(box, progress),
+        gachaEnabled: canOpenGacha(box, user),
       },
     })
   } catch (err) {

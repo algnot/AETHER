@@ -127,3 +127,6 @@
 .faction-badge.tribe-god {
   background: radial-gradient(circle at 35% 30%, #ffe8a0, #a88820 60%, #302808);
 }
+.faction-badge.tribe-mage {
+  background: radial-gradient(circle at 35% 30%, #d8b8ff, #6830a0 60%, #201028);
+}

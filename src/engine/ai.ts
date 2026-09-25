@@ -3,19 +3,44 @@ import type { CardInstance, GameState, PlayerId } from '../types/game'
 import {
   advancePhase,
   canActivateSoluy,
+  canActivateShorin,
+  canActivateAgatha,
+  canActivateNoah,
+  canActivateSaruka,
+  canActivateRyuka,
   canAttack,
   canPlaySpell,
   canSummon,
   canTargetMonster,
   canPaySola,
   beginSoluySwap,
+  beginShorinSearch,
+  beginAgathaSearch,
+  beginNoahMill,
+  beginSarukaSearch,
+  beginRyukaFetch,
   declareAttack,
   discardFromHand,
   getEffectiveAtk,
   isAlkataGod,
   isEnergyOrHpSummon,
+  isKataSpellOrTrap,
+  pickShorinSearch,
+  pickSarukaDiscard,
+  pickSarukaSearch,
+  pickRyukaFetch,
+  pickRyukaSleep,
+  pickAgathaSearch,
+  pickNoahMill,
+  pickGuardianTarget,
+  pickBuddyTarget,
+  pickHypnosisTarget,
+  pickTeleportSummon,
+  canFreePlaceMonster,
+  isBarrierAttackTarget,
+  listTrapsForWindow,
   respondTrap,
-  stageSpell,
+  offerOrStageSpell,
   summonMonster,
 } from './gameEngine'
 
@@ -381,6 +406,61 @@ function scoreSpell(state: GameState, card: CardInstance): number | null {
     case 'energy_charge':
       return me.energy < 4 ? 28 : me.energy < 6 ? 10 : null
 
+    case 'kata_guardian': {
+      const mages = me.field.filter(
+        (m) => m && getCard(m.cardId).tribe === 'mage',
+      )
+      if (mages.length === 0) return null
+      return 32 + mages.length * 4
+    }
+
+    case 'kata_prepare': {
+      if (me.spellTrap.some((c) => getCard(c.cardId).effectId === 'kata_prepare')) {
+        return me.hand.length <= 4 ? 14 : null
+      }
+      return me.hand.length <= 5 ? 26 : 12
+    }
+
+    case 'kata_buddy': {
+      const mages = me.field.filter(
+        (m) => m && getCard(m.cardId).tribe === 'mage',
+      )
+      if (mages.length < 2) return null
+      const powers = mages.map((m) =>
+        getEffectiveAtk(state, AI, m!.cardId, m!.instanceId),
+      )
+      powers.sort((a, b) => b - a)
+      const gain = powers[0]! + powers[1]!
+      return 20 + gain * 2
+    }
+
+    case 'kata_hypnosis': {
+      const foes = you.field.filter((m) => m !== null)
+      if (foes.length < 2) return null
+      return 28 + foes.length * 3
+    }
+
+    case 'kata_blink': {
+      if (freeZones(state, AI) === 0) return null
+      const mages = [
+        ...me.deck.filter(
+          (c) =>
+            getCard(c.cardId).tribe === 'mage' &&
+            canFreePlaceMonster(state, AI, c.cardId),
+        ),
+        ...me.graveyard.filter(
+          (c) =>
+            getCard(c.cardId).tribe === 'mage' &&
+            canFreePlaceMonster(state, AI, c.cardId),
+        ),
+      ]
+      if (mages.length === 0) return null
+      const bestAtk = Math.max(
+        ...mages.map((c) => getCard(c.cardId).atk ?? 0),
+      )
+      return 30 + bestAtk * 2
+    }
+
     case 'call_reinforcements': {
       const affordable = me.hand.filter((c) => {
         const d = getCard(c.cardId)
@@ -468,7 +548,7 @@ function collectMainActions(state: GameState): ScoredAction[] {
         score,
         label: `spell:${def.effectId}`,
         choice: {
-          apply: (s) => stageSpell(s, AI, c.instanceId),
+          apply: (s) => offerOrStageSpell(s, AI, c.instanceId),
         },
       })
       continue
@@ -521,6 +601,71 @@ function collectMainActions(state: GameState): ScoredAction[] {
     }
   }
 
+  const shorin = me.field.find(
+    (m) => m && canActivateShorin(state, AI, m.instanceId),
+  )
+  if (shorin) {
+    actions.push({
+      score: 55,
+      label: 'shorin',
+      choice: {
+        apply: (s) => beginShorinSearch(s, AI, shorin.instanceId),
+      },
+    })
+  }
+
+  const saruka = me.field.find(
+    (m) => m && canActivateSaruka(state, AI, m.instanceId),
+  )
+  if (saruka) {
+    actions.push({
+      score: 50,
+      label: 'saruka',
+      choice: {
+        apply: (s) => beginSarukaSearch(s, AI, saruka.instanceId),
+      },
+    })
+  }
+
+  const ryuka = me.field.find(
+    (m) => m && canActivateRyuka(state, AI, m.instanceId),
+  )
+  if (ryuka) {
+    actions.push({
+      score: 54,
+      label: 'ryuka',
+      choice: {
+        apply: (s) => beginRyukaFetch(s, AI, ryuka.instanceId),
+      },
+    })
+  }
+
+  const agatha = me.field.find(
+    (m) => m && canActivateAgatha(state, AI, m.instanceId),
+  )
+  if (agatha) {
+    actions.push({
+      score: 58,
+      label: 'agatha',
+      choice: {
+        apply: (s) => beginAgathaSearch(s, AI, agatha.instanceId),
+      },
+    })
+  }
+
+  const noah = me.field.find(
+    (m) => m && canActivateNoah(state, AI, m.instanceId),
+  )
+  if (noah) {
+    actions.push({
+      score: 52,
+      label: 'noah',
+      choice: {
+        apply: (s) => beginNoahMill(s, AI, noah.instanceId),
+      },
+    })
+  }
+
   return actions
 }
 
@@ -539,9 +684,256 @@ export function chooseAiAction(state: GameState): AiChoice | null {
     }
   }
 
+  if (
+    state.interaction.type === 'shorin_search' &&
+    state.interaction.ownerId === AI
+  ) {
+    const me = state.players[AI]
+    const deckPick = me.deck.find((c) => isKataSpellOrTrap(c.cardId))
+    if (deckPick) {
+      return {
+        apply: (s) =>
+          pickShorinSearch(s, AI, deckPick.instanceId, 'deck'),
+      }
+    }
+    const gyPick = me.graveyard.find((c) => isKataSpellOrTrap(c.cardId))
+    if (gyPick) {
+      return {
+        apply: (s) =>
+          pickShorinSearch(s, AI, gyPick.instanceId, 'graveyard'),
+      }
+    }
+    return null
+  }
+
+  if (
+    state.interaction.type === 'saruka_search' &&
+    state.interaction.ownerId === AI
+  ) {
+    const me = state.players[AI]
+    if (state.interaction.step === 'discard') {
+      const ranked = [...me.hand].sort((a, b) => {
+        const da = getCard(a.cardId)
+        const db = getCard(b.cardId)
+        const kataA = isKataSpellOrTrap(a.cardId) ? 1 : 0
+        const kataB = isKataSpellOrTrap(b.cardId) ? 1 : 0
+        if (kataA !== kataB) return kataA - kataB
+        return da.cost - db.cost
+      })
+      const discard = ranked[0]
+      if (!discard) return null
+      return {
+        apply: (s) => pickSarukaDiscard(s, AI, discard.instanceId),
+      }
+    }
+    const deckPick = me.deck.find((c) => isKataSpellOrTrap(c.cardId))
+    if (deckPick) {
+      return {
+        apply: (s) =>
+          pickSarukaSearch(s, AI, deckPick.instanceId, 'deck'),
+      }
+    }
+    const gyPick = me.graveyard.find((c) => isKataSpellOrTrap(c.cardId))
+    if (gyPick) {
+      return {
+        apply: (s) =>
+          pickSarukaSearch(s, AI, gyPick.instanceId, 'graveyard'),
+      }
+    }
+    return null
+  }
+
+  if (
+    state.interaction.type === 'ryuka_fetch' &&
+    state.interaction.ownerId === AI
+  ) {
+    const me = state.players[AI]
+    const gyPick = me.graveyard.find((c) => isKataSpellOrTrap(c.cardId))
+    if (!gyPick) return null
+    return {
+      apply: (s) => pickRyukaFetch(s, AI, gyPick.instanceId),
+    }
+  }
+
+  if (
+    state.interaction.type === 'ryuka_sleep' &&
+    state.interaction.ownerId === AI
+  ) {
+    const you = state.players[YOU]
+    const targets = you.field
+      .filter((m): m is NonNullable<typeof m> => !!m)
+      .map((m) => ({
+        m,
+        atk: getEffectiveAtk(state, YOU, m.cardId, m.instanceId),
+      }))
+      .sort((a, b) => b.atk - a.atk)
+    const best = targets[0]
+    if (!best) return null
+    return {
+      apply: (s) => pickRyukaSleep(s, AI, best.m.instanceId),
+    }
+  }
+
+  if (
+    state.interaction.type === 'agatha_search' &&
+    state.interaction.ownerId === AI
+  ) {
+    const me = state.players[AI]
+    if (state.interaction.step === 'gy') {
+      const gyPick = me.graveyard.find((c) => isKataSpellOrTrap(c.cardId))
+      if (!gyPick) return null
+      return {
+        apply: (s) => pickAgathaSearch(s, AI, gyPick.instanceId),
+      }
+    }
+    const deckPick = me.deck.find((c) => isKataSpellOrTrap(c.cardId))
+    if (!deckPick) return null
+    return {
+      apply: (s) => pickAgathaSearch(s, AI, deckPick.instanceId),
+    }
+  }
+
+  if (
+    state.interaction.type === 'noah_mill' &&
+    state.interaction.ownerId === AI
+  ) {
+    const me = state.players[AI]
+    const deckPick = me.deck.find((c) => isKataSpellOrTrap(c.cardId))
+    if (!deckPick) return null
+    return {
+      apply: (s) => pickNoahMill(s, AI, deckPick.instanceId),
+    }
+  }
+
+  if (
+    state.interaction.type === 'guardian_pick' &&
+    state.interaction.ownerId === AI
+  ) {
+    const me = state.players[AI]
+    const mage = me.field.find(
+      (m) => m && getCard(m.cardId).tribe === 'mage',
+    )
+    if (!mage) return null
+    return {
+      apply: (s) => pickGuardianTarget(s, AI, mage.instanceId),
+    }
+  }
+
+  if (
+    state.interaction.type === 'buddy_pick' &&
+    state.interaction.ownerId === AI
+  ) {
+    const me = state.players[AI]
+    const mages = me.field
+      .filter((m): m is NonNullable<typeof m> => !!m && getCard(m.cardId).tribe === 'mage')
+      .map((m) => ({
+        m,
+        atk: getEffectiveAtk(state, AI, m.cardId, m.instanceId),
+      }))
+      .sort((a, b) => b.atk - a.atk)
+    if (mages.length < 2) return null
+    const firstId = state.interaction.firstId
+    if (!firstId) {
+      return {
+        apply: (s) => pickBuddyTarget(s, AI, mages[0]!.m.instanceId),
+      }
+    }
+    const second =
+      mages.find((x) => x.m.instanceId !== firstId) ?? mages[1]
+    if (!second) return null
+    return {
+      apply: (s) => pickBuddyTarget(s, AI, second.m.instanceId),
+    }
+  }
+
+  if (
+    state.interaction.type === 'hypnosis_pick' &&
+    state.interaction.ownerId === AI
+  ) {
+    const you = state.players[YOU]
+    const foes = you.field
+      .filter((m): m is NonNullable<typeof m> => !!m)
+      .map((m) => ({
+        m,
+        atk: getEffectiveAtk(state, YOU, m.cardId, m.instanceId),
+      }))
+      .sort((a, b) => a.atk - b.atk)
+    if (foes.length < 2) return null
+    const firstId = state.interaction.firstId
+    if (!firstId) {
+      return {
+        apply: (s) => pickHypnosisTarget(s, AI, foes[0]!.m.instanceId),
+      }
+    }
+    const second =
+      foes.find((x) => x.m.instanceId !== firstId) ?? foes[1]
+    if (!second) return null
+    return {
+      apply: (s) => pickHypnosisTarget(s, AI, second.m.instanceId),
+    }
+  }
+
+  if (
+    state.interaction.type === 'teleport_pick' &&
+    state.interaction.ownerId === AI
+  ) {
+    const me = state.players[AI]
+    const rank = (c: CardInstance) => getCard(c.cardId).atk ?? 0
+    const deckPick = me.deck
+      .filter(
+        (c) =>
+          getCard(c.cardId).tribe === 'mage' &&
+          canFreePlaceMonster(state, AI, c.cardId),
+      )
+      .sort((a, b) => rank(b) - rank(a))[0]
+    if (deckPick) {
+      return {
+        apply: (s) =>
+          pickTeleportSummon(s, AI, deckPick.instanceId, 'deck'),
+      }
+    }
+    const gyPick = me.graveyard
+      .filter(
+        (c) =>
+          getCard(c.cardId).tribe === 'mage' &&
+          canFreePlaceMonster(state, AI, c.cardId),
+      )
+      .sort((a, b) => rank(b) - rank(a))[0]
+    if (gyPick) {
+      return {
+        apply: (s) =>
+          pickTeleportSummon(s, AI, gyPick.instanceId, 'graveyard'),
+      }
+    }
+    return null
+  }
+
   if (state.activePlayer !== AI) {
     if (state.awaitingTrap && state.interaction.type === 'trap_response') {
-      return { apply: (s) => respondTrap(s, AI, true) }
+      const threat = state.interaction.threat
+      const traps = listTrapsForWindow(
+        state.players[AI],
+        threat.window,
+        {
+          allowBarrier:
+            threat.window === 'on_attack' &&
+            isBarrierAttackTarget(state, AI, threat.targetInstanceId),
+        },
+      )
+      if (traps.length === 0) {
+        return { apply: (s) => respondTrap(s, AI, false) }
+      }
+      // Prefer Intercept, then Barrier
+      const intercept = traps.find(
+        (c) => getCard(c.cardId).effectId === 'kata_intercept',
+      )
+      const barrier = traps.find(
+        (c) => getCard(c.cardId).effectId === 'kata_barrier',
+      )
+      const pick = intercept ?? barrier ?? traps[0]!
+      return {
+        apply: (s) => respondTrap(s, AI, true, pick.instanceId),
+      }
     }
     return null
   }

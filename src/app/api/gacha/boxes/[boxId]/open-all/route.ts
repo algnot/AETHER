@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jsonError, userIdFromRequest } from '@/lib/auth'
 import { connectDb } from '@/lib/db'
-import { getGachaBox, remainingInBox } from '@/data/gachaBoxes'
+import { getGachaBox, remainingInBox, canOpenGacha } from '@/data/gachaBoxes'
 import { openPack, reboxProgress, type PulledCard } from '@/lib/gacha'
 import {
   addToInventory,
@@ -24,6 +24,9 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     await connectDb()
     const user = await User.findById(userId)
     if (!user) return jsonError('ไม่พบผู้ใช้', 401)
+    if (!canOpenGacha(box, user)) {
+      return jsonError('กล่องนี้ยังไม่เปิดให้สุ่มซอง — ดูการ์ดได้จากแท็บในกล่อง', 403)
+    }
 
     let progress = getBoxProgress(user, box.id)
     if (remainingInBox(box, progress).isEmpty) {

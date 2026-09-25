@@ -54,6 +54,8 @@ function resetForHand(card: CardInstance): CardInstance {
     hasAttacked: false,
     summonTurn: card.summonTurn,
     faceDown: false,
+    // Keep cost override if Shorin fetched this card this turn
+    tempCostOverride: card.tempCostOverride,
   }
 }
 
@@ -239,8 +241,8 @@ function enableAttacks(player: PlayerState): PlayerState {
       m
         ? {
             ...m,
-            canAttack: true,
-            hasAttacked: false,
+            canAttack: m.asleepUntil ? false : true,
+            hasAttacked: m.asleepUntil ? true : false,
             effectUsed: false,
             effectUses: undefined,
           }
@@ -376,6 +378,24 @@ function beginTurn(state: GameState): GameState {
     return next
   }
 
+  // Preparation Incantation: +1 draw if any drawn card is mage / 「คาถา」
+  let prepBonus = 0
+  const hasActivePrep = player.spellTrap.some(
+    (c) =>
+      getCard(c.cardId).effectId === 'kata_prepare' &&
+      (c.continuousTurnsLeft ?? 0) > 0,
+  )
+  if (hasActivePrep && drawn > 0) {
+    const drawnCards = player.hand.slice(handBefore)
+    const triggers = drawnCards.some((c) => isPrepDrawTrigger(c.cardId))
+    if (triggers && player.deck.length > 0) {
+      const beforeBonus = player.hand.length
+      player = drawCards(player, 1)
+      prepBonus = player.hand.length - beforeBonus
+    }
+  }
+
+  const handAfterNormal = handBefore + drawn
   let next: GameState = {
     ...state,
     phase: 'draw',
@@ -387,10 +407,17 @@ function beginTurn(state: GameState): GameState {
   next = log(
     next,
     handBefore < DRAW_HAND_FLOOR
-      ? `${player.name} จั่วเติมมือ ${drawn} ใบ → ${player.hand.length} ใบ (พลังงาน ${player.energy} · ได้เทิร์นนี้ +${player.turnEnergy})`
-      : `${player.name} จั่ว ${drawn} ใบ (มือ ${player.hand.length} · พลังงาน ${player.energy} · ได้เทิร์นนี้ +${player.turnEnergy})`,
+      ? `${player.name} จั่วเติมมือ ${drawn} ใบ → ${handAfterNormal} ใบ (พลังงาน ${player.energy} · ได้เทิร์นนี้ +${player.turnEnergy})`
+      : `${player.name} จั่ว ${drawn} ใบ (มือ ${handAfterNormal} · พลังงาน ${player.energy} · ได้เทิร์นนี้ +${player.turnEnergy})`,
   )
+  if (prepBonus > 0) {
+    next = log(
+      next,
+      `คาถาแห่งการเตรียมตัว — จั่วเพิ่ม ${prepBonus} ใบ (มือ ${player.hand.length})`,
+    )
+  }
   next = { ...next, phase: 'main1' }
+  next = settleAfterKataResolution(next, id)
   return enforceHandLimit(next, id)
 }
 
@@ -416,6 +443,16 @@ export function advancePhase(state: GameState): GameState {
   if (state.interaction.type === 'alkata_deck_search') return state
   if (state.interaction.type === 'alkata_mina_summon') return state
   if (state.interaction.type === 'soluy_swap') return state
+  if (state.interaction.type === 'shorin_search') return state
+  if (state.interaction.type === 'saruka_search') return state
+  if (state.interaction.type === 'ryuka_fetch') return state
+  if (state.interaction.type === 'ryuka_sleep') return state
+  if (state.interaction.type === 'agatha_search') return state
+  if (state.interaction.type === 'noah_mill') return state
+  if (state.interaction.type === 'guardian_pick') return state
+  if (state.interaction.type === 'buddy_pick') return state
+  if (state.interaction.type === 'hypnosis_pick') return state
+  if (state.interaction.type === 'teleport_pick') return state
   if (state.interaction.type === 'alkata_gy_recover') return state
   if (state.interaction.type === 'alkata_hand_summon') return state
   if (state.interaction.type === 'alkata_debuff') return state
@@ -456,19 +493,59 @@ function endTurn(state: GameState): GameState {
   player = eotDestroy.player
   let eotNote = eotDestroy.note
 
+  // Tick continuous ST (Preparation Incantation etc.)
+  const eotContinuous = tickContinuousSpellTraps(player)
+  player = eotContinuous.player
+  if (eotContinuous.note) {
+    eotNote = eotNote ? `${eotNote} · ${eotContinuous.note}` : eotContinuous.note
+  }
+
   // Cap leftover turn energy (combat-damage energy is not capped)
   player = capEnergyCarry(player)
 
-  // Clear temporary ATK mods on both fields at end of turn
-  const clearTemp = (p: PlayerState): PlayerState => ({
+  // Clear temporary ATK mods + cost overrides + field locks at end of turn
+  const clearTemp = (p: PlayerState, endingId: PlayerId): PlayerState => ({
     ...p,
-    field: p.field.map((m) =>
-      m && m.tempAtkMod ? { ...m, tempAtkMod: undefined } : m,
+    field: p.field.map((m) => {
+      if (!m) return m
+      let next = m
+      if (m.tempAtkMod || m.tempCostOverride !== undefined) {
+        next = { ...next, tempAtkMod: undefined, tempCostOverride: undefined }
+      }
+      if (m.fieldLockUntil === endingId) {
+        next = { ...next, fieldLockUntil: undefined }
+      }
+      // Saruka (+8 until opp EOT): clear when the opponent of this controller ends
+      if (m.oppEotAtkMod && endingId === otherPlayer(p.id)) {
+        next = { ...next, oppEotAtkMod: undefined }
+      }
+      // Ryuka sleep: clear when the designated player ends their turn
+      if (m.asleepUntil === endingId) {
+        next = { ...next, asleepUntil: undefined }
+      }
+      return next === m ? m : next
+    }),
+    hand: p.hand.map((c) =>
+      c.tempCostOverride !== undefined
+        ? { ...c, tempCostOverride: undefined }
+        : c,
     ),
+    spellTrap: p.spellTrap.map((c) =>
+      c.tempCostOverride !== undefined
+        ? { ...c, tempCostOverride: undefined }
+        : c,
+    ),
+    // Ryuka echo names last only for the controller's turn
+    ryukaEchoNames:
+      endingId === p.id ? undefined : p.ryukaEchoNames,
+    ryukaDoubleQueued:
+      endingId === p.id ? undefined : p.ryukaDoubleQueued,
+    ryukaDoubleEffectId:
+      endingId === p.id ? undefined : p.ryukaDoubleEffectId,
   })
-  player = clearTemp(player)
+  player = clearTemp(player, id)
   const waiting = otherPlayer(id)
-  const opponent = clearTemp(state.players[waiting])
+  const opponent = clearTemp(state.players[waiting], id)
 
   let next: GameState = {
     ...state,
@@ -508,6 +585,7 @@ function destroyEndOfTurnMonsters(player: PlayerState): {
   const names: string[] = []
   for (const mon of doomed) {
     if (!mon) continue
+    if (isFieldLocked(mon)) continue
     const idx = findFieldIndex(next, mon.instanceId)
     if (idx < 0) continue
     const field = [...next.field]
@@ -529,6 +607,44 @@ function destroyEndOfTurnMonsters(player: PlayerState): {
   }
 }
 
+/** Decrement continuous ST turn counters; send expired cards to GY */
+function tickContinuousSpellTraps(player: PlayerState): {
+  player: PlayerState
+  note: string | null
+} {
+  if (!player.spellTrap.some((c) => c.continuousTurnsLeft !== undefined)) {
+    return { player, note: null }
+  }
+
+  const kept: CardInstance[] = []
+  const expired: CardInstance[] = []
+  for (const c of player.spellTrap) {
+    if (c.continuousTurnsLeft === undefined) {
+      kept.push(c)
+      continue
+    }
+    const left = c.continuousTurnsLeft - 1
+    if (left <= 0) {
+      expired.push({ ...c, continuousTurnsLeft: undefined, faceDown: false })
+    } else {
+      kept.push({ ...c, continuousTurnsLeft: left })
+    }
+  }
+
+  if (expired.length === 0) {
+    return { player: { ...player, spellTrap: kept }, note: null }
+  }
+
+  return {
+    player: {
+      ...player,
+      spellTrap: kept,
+      graveyard: [...player.graveyard, ...expired],
+    },
+    note: `${expired.map((c) => getCard(c.cardId).nameTh).join(' · ')} หมดอายุต่อเนื่อง — เข้าสุสาน`,
+  }
+}
+
 function destroyBattlePhaseMonsters(state: GameState): GameState {
   let next = state
   const names: string[] = []
@@ -538,6 +654,7 @@ function destroyBattlePhaseMonsters(state: GameState): GameState {
     if (doomed.length === 0) continue
     for (const mon of doomed) {
       if (!mon) continue
+      if (isFieldLocked(mon)) continue
       const idx = findFieldIndex(player, mon.instanceId)
       if (idx < 0) continue
       const field = [...player.field]
@@ -876,6 +993,9 @@ export function pickSoraDestroy(
   if (mIdx < 0) return state
 
   const mon = opponent.field[mIdx]!
+  if (isFieldLocked(mon)) {
+    return log(state, `${getCard(mon.cardId).nameTh} ถูกล็อก — ทำลายไม่ได้`)
+  }
   const monDef = getCard(mon.cardId)
   const field = [...opponent.field]
   field[mIdx] = null
@@ -1511,6 +1631,389 @@ function scoutDebuff(state: GameState, ownerId: PlayerId): number {
   return countWarriorsOnField(state)
 }
 
+/** Effective play cost (Shorin override, Dynogr 「คาถา」 discount) */
+export function getEffectiveCost(
+  card: CardInstance,
+  state?: GameState,
+  ownerId?: PlayerId,
+): number {
+  if (card.tempCostOverride !== undefined) return card.tempCostOverride
+  let cost = getCard(card.cardId).cost
+  if (state && ownerId && isKataSpellOrTrap(card.cardId)) {
+    const discount = countDynogrOnField(state.players[ownerId]) * 2
+    if (discount > 0) cost = Math.max(0, cost - discount)
+  }
+  return cost
+}
+
+const KATA_NAME = 'คาถา'
+
+export function isKataSpellOrTrap(cardId: string): boolean {
+  const def = getCard(cardId)
+  if (def.type !== 'spell' && def.type !== 'trap') return false
+  return def.nameTh.includes(KATA_NAME) || def.name.includes('Incantation')
+}
+
+/** Mage monster or 「คาถา」 spell/trap — Preparation Incantation draw trigger */
+function isPrepDrawTrigger(cardId: string): boolean {
+  const def = getCard(cardId)
+  if (def.type === 'monster' && def.tribe === 'mage') return true
+  return isKataSpellOrTrap(cardId)
+}
+
+function isShorinCard(cardId: string): boolean {
+  return getCard(cardId).effectId === 'shorin_mage'
+}
+
+function isAgathaCard(cardId: string): boolean {
+  return getCard(cardId).effectId === 'agatha_mage'
+}
+
+function isDynogrCard(cardId: string): boolean {
+  return getCard(cardId).effectId === 'dynogr_mage'
+}
+
+function isSarukaCard(cardId: string): boolean {
+  return getCard(cardId).effectId === 'saruka_mage'
+}
+
+function isRyukaCard(cardId: string): boolean {
+  return getCard(cardId).effectId === 'ryuka_mage'
+}
+
+function countDynogrOnField(player: PlayerState): number {
+  return player.field.filter((m) => m && isDynogrCard(m.cardId)).length
+}
+
+function hasRyukaEcho(player: PlayerState, cardId: string): boolean {
+  const name = getCard(cardId).nameTh
+  return !!player.ryukaEchoNames?.includes(name)
+}
+
+function queueRyukaDouble(
+  player: PlayerState,
+  cardId: string,
+): PlayerState {
+  if (!hasRyukaEcho(player, cardId)) return player
+  const effectId = getCard(cardId).effectId
+  if (
+    effectId !== 'kata_guardian' &&
+    effectId !== 'kata_buddy' &&
+    effectId !== 'kata_prepare' &&
+    effectId !== 'kata_hypnosis' &&
+    effectId !== 'kata_blink'
+  ) {
+    return player
+  }
+  return {
+    ...player,
+    ryukaDoubleQueued: true,
+    ryukaDoubleEffectId: effectId,
+  }
+}
+
+function isMage(cardId: string): boolean {
+  return getCard(cardId).tribe === 'mage'
+}
+
+export function isFieldLocked(mon: CardInstance | null | undefined): boolean {
+  return !!mon?.fieldLockUntil
+}
+
+const AGATHA_DRAW_PER_TURN = 1
+const SARUKA_BUFF_PER_TURN = 1
+const RYUKA_SLEEP_PER_TURN = 1
+
+/** Trigger mage triggers when a คาถา spell/trap is used */
+function afterKataActivated(
+  state: GameState,
+  playerId: PlayerId,
+  activatedCardId: string,
+): GameState {
+  if (!isKataSpellOrTrap(activatedCardId)) return state
+  let player = { ...state.players[playerId] }
+  let shorinBuffed = 0
+  let agathaDrew = 0
+  let noahMages = 0
+  let dynogrEnergy = 0
+  let sarukaBuffed = 0
+  let ryukaSleepMarked = 0
+  let field = player.field.map((m) => {
+    if (!m) return m
+    let next = m
+    if (isShorinCard(m.cardId)) {
+      shorinBuffed += 1
+      next = { ...next, atkMod: (next.atkMod ?? 0) + 2 }
+    }
+    if (isDynogrCard(m.cardId)) {
+      dynogrEnergy += 1
+    }
+    if (
+      isSarukaCard(m.cardId) &&
+      (next.effectUses ?? 0) < SARUKA_BUFF_PER_TURN
+    ) {
+      sarukaBuffed += 1
+      next = {
+        ...next,
+        effectUses: (next.effectUses ?? 0) + 1,
+        oppEotAtkMod: (next.oppEotAtkMod ?? 0) + 8,
+      }
+    }
+    if (
+      isRyukaCard(m.cardId) &&
+      (next.effectUses ?? 0) < RYUKA_SLEEP_PER_TURN
+    ) {
+      ryukaSleepMarked += 1
+      next = { ...next, effectUses: (next.effectUses ?? 0) + 1 }
+    }
+    if (
+      isAgathaCard(m.cardId) &&
+      (next.effectUses ?? 0) < AGATHA_DRAW_PER_TURN
+    ) {
+      agathaDrew += 1
+      next = { ...next, effectUses: (next.effectUses ?? 0) + 1 }
+    }
+    return next
+  })
+
+  // Noah passive: all mages on our field +1 ATK (if any Noah is on field)
+  const hasNoah = field.some((m) => m && getCard(m.cardId).effectId === 'noah_mage')
+  if (hasNoah) {
+    field = field.map((m) => {
+      if (!m || !isMage(m.cardId)) return m
+      noahMages += 1
+      return { ...m, atkMod: (m.atkMod ?? 0) + 1 }
+    })
+  }
+
+  const opp = state.players[otherPlayer(playerId)]
+  const canSleep =
+    ryukaSleepMarked > 0 && opp.field.some((m) => m !== null)
+
+  let next: GameState = state
+  const fieldChanged =
+    shorinBuffed > 0 ||
+    agathaDrew > 0 ||
+    noahMages > 0 ||
+    sarukaBuffed > 0 ||
+    ryukaSleepMarked > 0
+  if (fieldChanged || dynogrEnergy > 0 || canSleep) {
+    player = {
+      ...player,
+      field: fieldChanged ? field : player.field,
+      energy: player.energy + dynogrEnergy,
+      ryukaSleepPending: canSleep ? true : player.ryukaSleepPending,
+    }
+    next = {
+      ...state,
+      players: { ...state.players, [playerId]: player },
+    }
+  }
+
+  if (shorinBuffed > 0) {
+    next = log(
+      next,
+      `จอมเวทย์ โชริน — ATK +2 จาก「${getCard(activatedCardId).nameTh}」(×${shorinBuffed})`,
+    )
+  }
+
+  if (noahMages > 0) {
+    next = log(
+      next,
+      `จอมเวทย์ โนอา — จอมเวทย์ทั้งหมด ATK +1 จาก「${getCard(activatedCardId).nameTh}」(×${noahMages})`,
+    )
+  }
+
+  if (dynogrEnergy > 0) {
+    next = log(
+      next,
+      `จอมเวทย์ ไดโนกร — พลังงาน +${dynogrEnergy} จาก「${getCard(activatedCardId).nameTh}」(รวม ${next.players[playerId].energy})`,
+    )
+  }
+
+  if (sarukaBuffed > 0) {
+    next = log(
+      next,
+      `จอมเวทย์ ซารุกะ — ATK +8 จนจบเทิร์นฝ่ายตรงข้าม จาก「${getCard(activatedCardId).nameTh}」(×${sarukaBuffed})`,
+    )
+  }
+
+  if (canSleep) {
+    next = log(
+      next,
+      `จอมเวทย์ ริวกะ — หลังคาถาจบผล จะเลือกมอนสเตอร์ฝ่ายตรงข้ามให้นอน`,
+    )
+  }
+
+  if (agathaDrew > 0) {
+    let p = { ...next.players[playerId] }
+    const before = p.hand.length
+    p = drawCards(p, agathaDrew)
+    const drawn = p.hand.length - before
+    next = {
+      ...next,
+      players: { ...next.players, [playerId]: p },
+    }
+    if (drawn > 0) {
+      next = log(
+        next,
+        `จอมเวทย์ อากาธา — จั่ว ${drawn} ใบจาก「${getCard(activatedCardId).nameTh}」`,
+      )
+      next = enforceHandLimit(next, playerId)
+    }
+  }
+
+  return next
+}
+
+/** After a 「คาถา」 fully resolves to idle — echo double then sleep pick */
+export function settleAfterKataResolution(
+  state: GameState,
+  playerId: PlayerId,
+): GameState {
+  if (state.winner) return state
+  if (state.interaction.type !== 'idle') return state
+
+  let next = maybeStartRyukaDouble(state, playerId)
+  if (next.interaction.type !== 'idle') return next
+  next = maybeStartRyukaSleep(next, playerId)
+  return next
+}
+
+function maybeStartRyukaDouble(
+  state: GameState,
+  playerId: PlayerId,
+): GameState {
+  const player = state.players[playerId]
+  if (!player.ryukaDoubleQueued || !player.ryukaDoubleEffectId) return state
+
+  const effectId = player.ryukaDoubleEffectId
+  const cleared: PlayerState = {
+    ...player,
+    ryukaDoubleQueued: undefined,
+    ryukaDoubleEffectId: undefined,
+  }
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: cleared },
+  }
+
+  if (effectId === 'kata_guardian') {
+    if (!cleared.field.some((m) => m && isMage(m.cardId))) {
+      next = log(next, `ริวกะ — ทำซ้ำคาถาผู้ป้องกันไม่ได้ (ไม่มีจอมเวทย์)`)
+      return next
+    }
+    next = {
+      ...next,
+      interaction: {
+        type: 'guardian_pick',
+        spellInstanceId: null,
+        ownerId: playerId,
+      },
+    }
+    next = log(next, `ริวกะ — ทำผล「คาถาผู้ป้องกัน」รอบที่ 2`)
+    return next
+  }
+
+  if (effectId === 'kata_buddy') {
+    const mages = cleared.field.filter((m) => m && isMage(m.cardId))
+    if (mages.length < 2) {
+      next = log(next, `ริวกะ — ทำซ้ำคาถาคู่หูไม่ได้ (จอมเวทย์ไม่ครบ)`)
+      return next
+    }
+    next = {
+      ...next,
+      interaction: {
+        type: 'buddy_pick',
+        spellInstanceId: null,
+        ownerId: playerId,
+      },
+    }
+    next = log(next, `ริวกะ — ทำผล「คาถาคู่หู」รอบที่ 2`)
+    return next
+  }
+
+  if (effectId === 'kata_prepare') {
+    next = log(next, `ริวกะ — เวทย์ต่อเนื่องไม่ทำซ้ำเพิ่ม`)
+    return next
+  }
+
+  if (effectId === 'kata_hypnosis') {
+    const opp = next.players[otherPlayer(playerId)]
+    const monsters = opp.field.filter((m) => m !== null)
+    if (monsters.length < 2) {
+      next = log(next, `ริวกะ — ทำซ้ำคาถาสะกดจิตไม่ได้ (มอนสเตอร์ฝ่ายตรงข้ามไม่ครบ)`)
+      return next
+    }
+    next = {
+      ...next,
+      interaction: {
+        type: 'hypnosis_pick',
+        spellInstanceId: null,
+        ownerId: playerId,
+      },
+    }
+    next = log(next, `ริวกะ — ทำผล「คาถาสะกดจิต」รอบที่ 2`)
+    return next
+  }
+
+  if (effectId === 'kata_blink') {
+    const p = next.players[playerId]
+    const hasMage =
+      p.deck.some((c) => isMage(c.cardId) && canFreePlaceMonster(next, playerId, c.cardId)) ||
+      p.graveyard.some((c) => isMage(c.cardId) && canFreePlaceMonster(next, playerId, c.cardId))
+    if (!hasMage || !p.field.some((z) => z === null)) {
+      next = log(next, `ริวกะ — ทำซ้ำคาถาย้ายฉับพลันไม่ได้`)
+      return next
+    }
+    next = {
+      ...next,
+      interaction: {
+        type: 'teleport_pick',
+        spellInstanceId: null,
+        ownerId: playerId,
+      },
+    }
+    next = log(next, `ริวกะ — ทำผล「คาถาย้ายฉับพลัน」รอบที่ 2`)
+    return next
+  }
+
+  return next
+}
+
+function maybeStartRyukaSleep(
+  state: GameState,
+  playerId: PlayerId,
+): GameState {
+  const player = state.players[playerId]
+  if (!player.ryukaSleepPending) return state
+  // Defer while not our turn / mid-battle / trap window
+  if (state.activePlayer !== playerId) return state
+  if (state.phase === 'battle' || state.awaitingTrap) return state
+
+  const opp = state.players[otherPlayer(playerId)]
+  if (!opp.field.some((m) => m !== null)) {
+    return {
+      ...state,
+      players: {
+        ...state.players,
+        [playerId]: { ...player, ryukaSleepPending: undefined },
+      },
+    }
+  }
+
+  let next: GameState = {
+    ...state,
+    players: {
+      ...state.players,
+      [playerId]: { ...player, ryukaSleepPending: undefined },
+    },
+    interaction: { type: 'ryuka_sleep', ownerId: playerId },
+  }
+  next = log(next, `ริวกะ — เลือกมอนสเตอร์ฝ่ายตรงข้ามให้นอนจนจบเทิร์นของอีกฝ่าย`)
+  return next
+}
+
 /** Effective ATK including continuous field effects and instance modifiers */
 export function getEffectiveAtk(
   state: GameState,
@@ -1571,6 +2074,14 @@ export function getAtkBreakdown(
     parts.push({
       label: temp > 0 ? 'บัฟชั่วคราว' : 'ดีบัฟชั่วคราว',
       value: temp,
+    })
+  }
+
+  const oppEot = mon.oppEotAtkMod ?? 0
+  if (oppEot !== 0) {
+    parts.push({
+      label: 'ซารุกะ (จนจบเทิร์นฝ่ายตรงข้าม)',
+      value: oppEot,
     })
   }
 
@@ -1671,6 +2182,16 @@ export function canSummon(
   if (state.interaction.type === 'alkata_deck_search') return false
   if (state.interaction.type === 'alkata_mina_summon') return false
   if (state.interaction.type === 'soluy_swap') return false
+  if (state.interaction.type === 'shorin_search') return false
+  if (state.interaction.type === 'saruka_search') return false
+  if (state.interaction.type === 'ryuka_fetch') return false
+  if (state.interaction.type === 'ryuka_sleep') return false
+  if (state.interaction.type === 'agatha_search') return false
+  if (state.interaction.type === 'noah_mill') return false
+  if (state.interaction.type === 'guardian_pick') return false
+  if (state.interaction.type === 'buddy_pick') return false
+  if (state.interaction.type === 'hypnosis_pick') return false
+  if (state.interaction.type === 'teleport_pick') return false
   if (state.interaction.type === 'alkata_gy_recover') return false
   if (state.interaction.type === 'alkata_hand_summon') return false
   if (state.interaction.type === 'alkata_debuff') return false
@@ -1678,16 +2199,19 @@ export function canSummon(
   const player = state.players[playerId]
   const idx = findHandIndex(player, instanceId)
   if (idx < 0) return false
-  const def = getCard(player.hand[idx].cardId)
+  const handCard = player.hand[idx]
+  const def = getCard(handCard.cardId)
   if (def.type !== 'monster') return false
 
   // During reinforce window, use HP summons instead
   if (state.interaction.type === 'reinforce') return false
 
+  const cost = getEffectiveCost(handCard)
+
   // Destruction robots: pay 6 HP (card cost) — energy cannot be used
   if (isEnergyOrHpSummon(def.effectId)) {
-    if (player.hp < def.cost) return false
-  } else if (player.energy < def.cost) {
+    if (player.hp < cost) return false
+  } else if (player.energy < cost) {
     return false
   }
 
@@ -1760,14 +2284,15 @@ export function summonMonster(
   const handIdx = findHandIndex(player, instanceId)
   const card = player.hand[handIdx]
   const def = getCard(card.cardId)
+  const cost = getEffectiveCost(card)
 
   let pay: 'energy' | 'hp' | null = null
   let payNote = ''
   if (isEnergyOrHpSummon(def.effectId)) {
-    if (player.hp < def.cost) return state
+    if (player.hp < cost) return state
     pay = 'hp'
-    payNote = `จ่าย HP ${def.cost}`
-  } else if (player.energy < def.cost) {
+    payNote = `จ่าย HP ${cost}`
+  } else if (player.energy < cost) {
     return state
   }
 
@@ -1794,7 +2319,7 @@ export function summonMonster(
     ourField[zone] = summoned
     player = spendEnergy(
       { ...player, hand, field: ourField },
-      def.cost,
+      cost,
     )
 
     const oppField = [...opponent.field]
@@ -1831,9 +2356,9 @@ export function summonMonster(
     field,
   }
   if (pay === 'hp') {
-    updated = { ...updated, hp: updated.hp - def.cost }
+    updated = { ...updated, hp: updated.hp - cost }
   } else {
-    updated = spendEnergy(updated, def.cost)
+    updated = spendEnergy(updated, cost)
   }
 
   const oppId = otherPlayer(playerId)
@@ -1891,6 +2416,16 @@ export function canPlaySpell(
   if (state.interaction.type === 'alkata_deck_search') return false
   if (state.interaction.type === 'alkata_mina_summon') return false
   if (state.interaction.type === 'soluy_swap') return false
+  if (state.interaction.type === 'shorin_search') return false
+  if (state.interaction.type === 'saruka_search') return false
+  if (state.interaction.type === 'ryuka_fetch') return false
+  if (state.interaction.type === 'ryuka_sleep') return false
+  if (state.interaction.type === 'agatha_search') return false
+  if (state.interaction.type === 'noah_mill') return false
+  if (state.interaction.type === 'guardian_pick') return false
+  if (state.interaction.type === 'buddy_pick') return false
+  if (state.interaction.type === 'hypnosis_pick') return false
+  if (state.interaction.type === 'teleport_pick') return false
   if (state.interaction.type === 'alkata_gy_recover') return false
   if (state.interaction.type === 'alkata_hand_summon') return false
   if (state.interaction.type === 'alkata_debuff') return false
@@ -1898,9 +2433,10 @@ export function canPlaySpell(
   const player = state.players[playerId]
   const idx = findHandIndex(player, instanceId)
   if (idx < 0) return false
-  const def = getCard(player.hand[idx].cardId)
+  const handCard = player.hand[idx]
+  const def = getCard(handCard.cardId)
   if (def.type !== 'spell') return false
-  if (player.energy < def.cost) return false
+  if (player.energy < getEffectiveCost(handCard, state, playerId)) return false
 
   if (def.effectId === 'call_reinforcements') {
     if (!player.field.some((z) => z === null)) return false
@@ -1953,7 +2489,53 @@ export function canPlaySpell(
     if (!player.field.some((m) => m && isAlkataGod(m.cardId))) return false
   }
 
+  if (def.effectId === 'kata_guardian') {
+    if (!player.field.some((m) => m && isMage(m.cardId))) return false
+  }
+
+  if (def.effectId === 'kata_buddy') {
+    const mages = player.field.filter((m) => m && isMage(m.cardId))
+    if (mages.length < 2) return false
+  }
+
+  if (def.effectId === 'kata_hypnosis') {
+    const opp = state.players[otherPlayer(playerId)]
+    if (opp.field.filter((m) => m !== null).length < 2) return false
+  }
+
+  if (def.effectId === 'kata_blink') {
+    if (!player.field.some((z) => z === null)) return false
+    const hasMage =
+      player.deck.some(
+        (c) => isMage(c.cardId) && canFreePlaceMonster(state, playerId, c.cardId),
+      ) ||
+      player.graveyard.some(
+        (c) => isMage(c.cardId) && canFreePlaceMonster(state, playerId, c.cardId),
+      )
+    if (!hasMage) return false
+  }
+
   return canAddSpellTrap(player)
+}
+
+/**
+ * Offer Intercept to the opponent if possible; otherwise stage the spell.
+ * Use skipIntercept after the opponent declines the counter window.
+ */
+export function offerOrStageSpell(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+  opts?: { skipIntercept?: boolean },
+): GameState {
+  if (!canPlaySpell(state, playerId, instanceId)) return state
+  if (!opts?.skipIntercept) {
+    const defenderId = otherPlayer(playerId)
+    if (canOfferIntercept(state, defenderId)) {
+      return openActivationCounter(state, playerId, instanceId, 'spell')
+    }
+  }
+  return stageSpell(state, playerId, instanceId)
 }
 
 /** Put spell face-up on the ST strip (effect resolves later) */
@@ -1968,15 +2550,16 @@ export function stageSpell(
   const handIdx = findHandIndex(player, instanceId)
   const card = player.hand[handIdx]
   const def = getCard(card.cardId)
+  const cost = getEffectiveCost(card, state, playerId)
 
   const hand = [...player.hand]
   hand.splice(handIdx, 1)
 
-  const spellTrap = [...player.spellTrap, { ...card, faceDown: false }]
+  const spellTrap = [...player.spellTrap, { ...card, faceDown: false, tempCostOverride: undefined }]
 
   let updated: PlayerState = spendEnergy(
     { ...player, hand, spellTrap },
-    def.cost,
+    cost,
   )
 
   let payNote = ''
@@ -1995,6 +2578,7 @@ export function stageSpell(
     selectedCardId: def.id,
   }
   next = log(next, `${updated.name} ร่าย ${def.nameTh}!${payNote}`)
+  next = afterKataActivated(next, playerId, def.id)
 
   if (def.effectId === 'soul_drain') {
     next = {
@@ -2094,6 +2678,70 @@ export function stageSpell(
       },
     }
     next = log(next, `${def.nameTh} — เลือกเทพแห่งอัลคาทาบนสนามเราเพื่อทำลาย`)
+  } else if (def.effectId === 'kata_guardian') {
+    let p = next.players[playerId]
+    p = queueRyukaDouble(p, def.id)
+    next = {
+      ...next,
+      players: { ...next.players, [playerId]: p },
+      interaction: {
+        type: 'guardian_pick',
+        spellInstanceId: card.instanceId,
+        ownerId: playerId,
+      },
+    }
+    next = log(
+      next,
+      `${def.nameTh} — เลือกจอมเวทย์บนสนามเราเพื่อล็อกจนจบเทิร์นอีกฝ่าย`,
+    )
+  } else if (def.effectId === 'kata_buddy') {
+    let p = next.players[playerId]
+    p = queueRyukaDouble(p, def.id)
+    next = {
+      ...next,
+      players: { ...next.players, [playerId]: p },
+      interaction: {
+        type: 'buddy_pick',
+        spellInstanceId: card.instanceId,
+        ownerId: playerId,
+      },
+    }
+    next = log(
+      next,
+      `${def.nameTh} — เลือกจอมเวทย์บนสนามเรา 2 ตัวเพื่อรวมพลังโจมตี`,
+    )
+  } else if (def.effectId === 'kata_hypnosis') {
+    let p = next.players[playerId]
+    p = queueRyukaDouble(p, def.id)
+    next = {
+      ...next,
+      players: { ...next.players, [playerId]: p },
+      interaction: {
+        type: 'hypnosis_pick',
+        spellInstanceId: card.instanceId,
+        ownerId: playerId,
+      },
+    }
+    next = log(
+      next,
+      `${def.nameTh} — เลือกมอนสเตอร์ฝ่ายตรงข้าม 2 ตัวให้ต่อสู้กัน`,
+    )
+  } else if (def.effectId === 'kata_blink') {
+    let p = next.players[playerId]
+    p = queueRyukaDouble(p, def.id)
+    next = {
+      ...next,
+      players: { ...next.players, [playerId]: p },
+      interaction: {
+        type: 'teleport_pick',
+        spellInstanceId: card.instanceId,
+        ownerId: playerId,
+      },
+    }
+    next = log(
+      next,
+      `${def.nameTh} — เลือกมอนสเตอร์จอมเวทย์จากเด็คหรือสุสานเพื่ออัญเชิญ`,
+    )
   }
   return next
 }
@@ -2112,6 +2760,32 @@ export function resolveSpell(
   const def = getCard(card.cardId)
   if (def.type !== 'spell') return state
 
+  // Continuous: stay on ST with turn counter
+  if (def.effectId === 'kata_prepare') {
+    const echo = hasRyukaEcho(player, def.id)
+    const turns = echo ? 6 : 3
+    const spellTrap = [...player.spellTrap]
+    spellTrap[stIdx] = {
+      ...card,
+      faceDown: false,
+      continuousTurnsLeft: turns,
+    }
+    player = { ...player, spellTrap }
+    let next: GameState = {
+      ...state,
+      players: { ...state.players, [playerId]: player },
+      selectedCardId: def.id,
+      interaction: { type: 'idle' },
+    }
+    next = log(
+      next,
+      `${player.name} วาง ${def.nameTh} เป็นเวทย์ต่อเนื่อง (เหลือ ${turns} เทิร์นของเรา)${
+        echo ? ' · ริวกะทำซ้ำ' : ''
+      }`,
+    )
+    return settleAfterKataResolution(next, playerId)
+  }
+
   const spellTrap = [...player.spellTrap]
   spellTrap.splice(stIdx, 1)
 
@@ -2121,12 +2795,14 @@ export function resolveSpell(
     graveyard: [...player.graveyard, { ...card, faceDown: false }],
   }
 
+  const echo = hasRyukaEcho(player, def.id)
+  const times = echo ? 2 : 1
   let drawn = 0
   if (def.effectId === 'energy_charge') {
-    player = { ...player, energy: player.energy + 3 }
+    player = { ...player, energy: player.energy + 3 * times }
   } else if (def.effectId === 'heavenly_voice') {
     const before = player.hand.length
-    player = drawCards(player, 2)
+    player = drawCards(player, 2 * times)
     drawn = player.hand.length - before
   }
 
@@ -2137,11 +2813,18 @@ export function resolveSpell(
     interaction: { type: 'idle' },
   }
   if (def.effectId === 'energy_charge') {
-    next = log(next, `${player.name} ได้รับพลังงาน +3 (รวม ${player.energy})`)
+    next = log(
+      next,
+      `${player.name} ได้รับพลังงาน +${3 * times} (รวม ${player.energy})${
+        echo ? ' · ริวกะทำซ้ำ' : ''
+      }`,
+    )
   } else if (def.effectId === 'heavenly_voice') {
     next = log(
       next,
-      `${player.name} ใช้ ${def.nameTh} — จั่ว ${drawn} ใบ (มือ ${player.hand.length})`,
+      `${player.name} ใช้ ${def.nameTh} — จั่ว ${drawn} ใบ (มือ ${player.hand.length})${
+        echo ? ' · ริวกะทำซ้ำ' : ''
+      }`,
     )
     next = enforceHandLimit(next, playerId)
   } else if (def.effectId === 'call_reinforcements') {
@@ -2175,6 +2858,9 @@ export function resolveSpell(
   } else {
     next = log(next, `${def.nameTh} เข้าสุสาน`)
   }
+  if (next.interaction.type === 'idle') {
+    next = settleAfterKataResolution(next, playerId)
+  }
   return next
 }
 
@@ -2188,7 +2874,9 @@ export function pickSoulDrainSacrifice(
   if (state.interaction.sacrificeId) return state
 
   const player = state.players[playerId]
-  if (findFieldIndex(player, monsterInstanceId) < 0) return state
+  const sacIdx = findFieldIndex(player, monsterInstanceId)
+  if (sacIdx < 0) return state
+  if (isFieldLocked(player.field[sacIdx])) return state
 
   const others = player.field.filter(
     (m) => m && m.instanceId !== monsterInstanceId,
@@ -2234,6 +2922,7 @@ export function pickSoulDrainTarget(
   if (stIdx < 0) return state
 
   const sacrifice = player.field[sacIdx]!
+  if (isFieldLocked(sacrifice)) return state
   const buffTarget = player.field[buffIdx]!
   const spellCard = player.spellTrap[stIdx]
   const spellDef = getCard(spellCard.cardId)
@@ -2299,6 +2988,9 @@ export function pickAlkataPlot(
   if (mIdx < 0) return state
   const target = player.field[mIdx]!
   if (!isAlkataGod(target.cardId)) return state
+  if (isFieldLocked(target)) {
+    return log(state, `${getCard(target.cardId).nameTh} ถูกล็อก — ทำลายไม่ได้`)
+  }
 
   const stIdx = findSpellTrapIndex(player, spellInstanceId)
   if (stIdx < 0) return state
@@ -2948,8 +3640,18 @@ export function beginSoluySwap(
   state: GameState,
   playerId: PlayerId,
   sourceId: string,
+  opts?: { skipIntercept?: boolean },
 ): GameState {
   if (!canActivateSoluy(state, playerId, sourceId)) return state
+  if (!opts?.skipIntercept) {
+    const blocked = maybeInterceptMonsterEffect(
+      state,
+      playerId,
+      sourceId,
+      'soluy_swap',
+    )
+    if (blocked) return blocked
+  }
   const uses = state.players[playerId].field[findFieldIndex(state.players[playerId], sourceId)]!
     .effectUses ?? 0
   let next: GameState = {
@@ -2983,6 +3685,9 @@ export function pickSoluyBounce(
   if (!isWarrior(mon.cardId)) return state
   // Cannot bounce Soluy Air Soldier
   if (isSoluyCard(mon.cardId)) return state
+  if (isFieldLocked(mon)) {
+    return log(state, `${getCard(mon.cardId).nameTh} ถูกล็อก — ส่งกลับขึ้นมือไม่ได้`)
+  }
 
   const def = getCard(mon.cardId)
   const field = [...player.field]
@@ -3179,6 +3884,1475 @@ export function resolveSoluySummon(
   )
   if (next.interaction.type !== 'idle') return next
   return checkWinner(next)
+}
+
+export function canActivateShorin(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+): boolean {
+  if (state.winner) return false
+  if (state.activePlayer !== playerId) return false
+  if (state.phase !== 'main1' && state.phase !== 'main2') return false
+  if (state.interaction.type !== 'idle') return false
+
+  const player = state.players[playerId]
+  const idx = findFieldIndex(player, instanceId)
+  if (idx < 0) return false
+  const mon = player.field[idx]!
+  if (!isShorinCard(mon.cardId)) return false
+  if (mon.effectUsed) return false
+
+  const hasTarget =
+    player.deck.some((c) => isKataSpellOrTrap(c.cardId)) ||
+    player.graveyard.some((c) => isKataSpellOrTrap(c.cardId))
+  return hasTarget
+}
+
+export function beginShorinSearch(
+  state: GameState,
+  playerId: PlayerId,
+  sourceId: string,
+  opts?: { skipIntercept?: boolean },
+): GameState {
+  if (!canActivateShorin(state, playerId, sourceId)) return state
+  if (!opts?.skipIntercept) {
+    const blocked = maybeInterceptMonsterEffect(
+      state,
+      playerId,
+      sourceId,
+      'shorin_mage',
+    )
+    if (blocked) return blocked
+  }
+  const mon = state.players[playerId].field[findFieldIndex(state.players[playerId], sourceId)]!
+  let next: GameState = {
+    ...state,
+    interaction: { type: 'shorin_search', sourceId, ownerId: playerId },
+    selectedCardId: getCard(mon.cardId).id,
+  }
+  next = log(
+    next,
+    `จอมเวทย์ โชริน — เลือกเวทย์/กับดักที่มี「คาถา」จากเด็คหรือสุสานขึ้นมือ (ค่าร่าย 0 จนจบเทิร์น)`,
+  )
+  return next
+}
+
+export function cancelShorinSearch(state: GameState): GameState {
+  if (state.interaction.type !== 'shorin_search') return state
+  return { ...state, interaction: { type: 'idle' } }
+}
+
+export function pickShorinSearch(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+  from: 'deck' | 'graveyard',
+): GameState {
+  if (state.interaction.type !== 'shorin_search') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+
+  const { sourceId } = state.interaction
+  let player = { ...state.players[playerId] }
+  const sourceIdx = findFieldIndex(player, sourceId)
+  if (sourceIdx < 0) return state
+  const source = player.field[sourceIdx]!
+  if (!isShorinCard(source.cardId) || source.effectUsed) return state
+
+  let fetched: CardInstance | null = null
+  if (from === 'deck') {
+    const deckIdx = player.deck.findIndex((c) => c.instanceId === instanceId)
+    if (deckIdx < 0) return state
+    fetched = player.deck[deckIdx]
+    if (!isKataSpellOrTrap(fetched.cardId)) return state
+    const deck = [...player.deck]
+    deck.splice(deckIdx, 1)
+    player = { ...player, deck: shuffle(deck) }
+  } else {
+    const gyIdx = player.graveyard.findIndex((c) => c.instanceId === instanceId)
+    if (gyIdx < 0) return state
+    fetched = player.graveyard[gyIdx]
+    if (!isKataSpellOrTrap(fetched.cardId)) return state
+    const graveyard = [...player.graveyard]
+    graveyard.splice(gyIdx, 1)
+    player = { ...player, graveyard }
+  }
+
+  const toHand: CardInstance = {
+    ...fetched,
+    faceDown: false,
+    tempCostOverride: 0,
+  }
+  const field = [...player.field]
+  field[sourceIdx] = { ...source, effectUsed: true }
+  player = {
+    ...player,
+    field,
+    hand: [...player.hand, toHand],
+  }
+
+  const def = getCard(toHand.cardId)
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: player },
+    interaction: { type: 'idle' },
+    selectedCardId: def.id,
+  }
+  next = log(
+    next,
+    `โชรินนำ ${def.nameTh} จาก${from === 'deck' ? 'เด็ค' : 'สุสาน'}ขึ้นมือ — ค่าร่าย 0 จนจบเทิร์น`,
+  )
+  return enforceHandLimit(next, playerId)
+}
+
+export function canActivateSaruka(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+): boolean {
+  if (state.winner) return false
+  if (state.activePlayer !== playerId) return false
+  if (state.phase !== 'main1' && state.phase !== 'main2') return false
+  if (state.interaction.type !== 'idle') return false
+
+  const player = state.players[playerId]
+  const idx = findFieldIndex(player, instanceId)
+  if (idx < 0) return false
+  const mon = player.field[idx]!
+  if (!isSarukaCard(mon.cardId)) return false
+  if (mon.effectUsed) return false
+  if (player.hand.length < 1) return false
+
+  return (
+    player.deck.some((c) => isKataSpellOrTrap(c.cardId)) ||
+    player.graveyard.some((c) => isKataSpellOrTrap(c.cardId))
+  )
+}
+
+export function beginSarukaSearch(
+  state: GameState,
+  playerId: PlayerId,
+  sourceId: string,
+  opts?: { skipIntercept?: boolean },
+): GameState {
+  if (!canActivateSaruka(state, playerId, sourceId)) return state
+  if (!opts?.skipIntercept) {
+    const blocked = maybeInterceptMonsterEffect(
+      state,
+      playerId,
+      sourceId,
+      'saruka_mage',
+    )
+    if (blocked) return blocked
+  }
+  const mon =
+    state.players[playerId].field[
+      findFieldIndex(state.players[playerId], sourceId)
+    ]!
+  let next: GameState = {
+    ...state,
+    interaction: {
+      type: 'saruka_search',
+      sourceId,
+      ownerId: playerId,
+      step: 'discard',
+    },
+    selectedCardId: getCard(mon.cardId).id,
+  }
+  next = log(next, `จอมเวทย์ ซารุกะ — ทิ้งการ์ดจากมือ 1 ใบ`)
+  return next
+}
+
+export function cancelSarukaSearch(state: GameState): GameState {
+  if (state.interaction.type !== 'saruka_search') return state
+  // Only cancel before paying the discard
+  if (state.interaction.step !== 'discard') return state
+  return { ...state, interaction: { type: 'idle' } }
+}
+
+export function pickSarukaDiscard(
+  state: GameState,
+  playerId: PlayerId,
+  handInstanceId: string,
+): GameState {
+  if (state.interaction.type !== 'saruka_search') return state
+  if (state.interaction.step !== 'discard') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+
+  const { sourceId } = state.interaction
+  let player = { ...state.players[playerId] }
+  const sourceIdx = findFieldIndex(player, sourceId)
+  if (sourceIdx < 0) return state
+  const source = player.field[sourceIdx]!
+  if (!isSarukaCard(source.cardId) || source.effectUsed) return state
+
+  const handIdx = findHandIndex(player, handInstanceId)
+  if (handIdx < 0) return state
+  const discarded = player.hand[handIdx]
+  const hand = [...player.hand]
+  hand.splice(handIdx, 1)
+  const field = [...player.field]
+  field[sourceIdx] = { ...source, effectUsed: true }
+  player = {
+    ...player,
+    hand,
+    field,
+    graveyard: [...player.graveyard, { ...discarded, faceDown: false }],
+  }
+
+  const stillHasKata =
+    player.deck.some((c) => isKataSpellOrTrap(c.cardId)) ||
+    player.graveyard.some((c) => isKataSpellOrTrap(c.cardId))
+
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: player },
+    selectedCardId: getCard(discarded.cardId).id,
+  }
+  next = log(
+    next,
+    `ซารุกะทิ้ง ${getCard(discarded.cardId).nameTh}`,
+  )
+
+  if (!stillHasKata) {
+    next = { ...next, interaction: { type: 'idle' } }
+    next = log(next, `ซารุกะ — ไม่มี「คาถา」ในเด็ค/สุสาน`)
+    return next
+  }
+
+  next = {
+    ...next,
+    interaction: {
+      type: 'saruka_search',
+      sourceId,
+      ownerId: playerId,
+      step: 'fetch',
+    },
+  }
+  next = log(next, `ซารุกะ — เลือก「คาถา」จากเด็คหรือสุสานขึ้นมือ`)
+  return next
+}
+
+export function pickSarukaSearch(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+  from: 'deck' | 'graveyard',
+): GameState {
+  if (state.interaction.type !== 'saruka_search') return state
+  if (state.interaction.step !== 'fetch') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+
+  const { sourceId } = state.interaction
+  let player = { ...state.players[playerId] }
+  const sourceIdx = findFieldIndex(player, sourceId)
+  if (sourceIdx < 0) return state
+  const source = player.field[sourceIdx]!
+  if (!isSarukaCard(source.cardId)) return state
+
+  let fetched: CardInstance | null = null
+  if (from === 'deck') {
+    const deckIdx = player.deck.findIndex((c) => c.instanceId === instanceId)
+    if (deckIdx < 0) return state
+    fetched = player.deck[deckIdx]
+    if (!isKataSpellOrTrap(fetched.cardId)) return state
+    const deck = [...player.deck]
+    deck.splice(deckIdx, 1)
+    player = { ...player, deck: shuffle(deck) }
+  } else {
+    const gyIdx = player.graveyard.findIndex((c) => c.instanceId === instanceId)
+    if (gyIdx < 0) return state
+    fetched = player.graveyard[gyIdx]
+    if (!isKataSpellOrTrap(fetched.cardId)) return state
+    const graveyard = [...player.graveyard]
+    graveyard.splice(gyIdx, 1)
+    player = { ...player, graveyard }
+  }
+
+  const toHand: CardInstance = { ...fetched, faceDown: false }
+  player = {
+    ...player,
+    hand: [...player.hand, toHand],
+  }
+
+  const def = getCard(toHand.cardId)
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: player },
+    interaction: { type: 'idle' },
+    selectedCardId: def.id,
+  }
+  next = log(
+    next,
+    `ซารุกะนำ ${def.nameTh} จาก${from === 'deck' ? 'เด็ค' : 'สุสาน'}ขึ้นมือ`,
+  )
+  return enforceHandLimit(next, playerId)
+}
+
+export function canActivateRyuka(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+): boolean {
+  if (state.winner) return false
+  if (state.activePlayer !== playerId) return false
+  if (state.phase !== 'main1' && state.phase !== 'main2') return false
+  if (state.interaction.type !== 'idle') return false
+
+  const player = state.players[playerId]
+  const idx = findFieldIndex(player, instanceId)
+  if (idx < 0) return false
+  const mon = player.field[idx]!
+  if (!isRyukaCard(mon.cardId)) return false
+  if (mon.effectUsed) return false
+  return player.graveyard.some((c) => isKataSpellOrTrap(c.cardId))
+}
+
+export function beginRyukaFetch(
+  state: GameState,
+  playerId: PlayerId,
+  sourceId: string,
+  opts?: { skipIntercept?: boolean },
+): GameState {
+  if (!canActivateRyuka(state, playerId, sourceId)) return state
+  if (!opts?.skipIntercept) {
+    const blocked = maybeInterceptMonsterEffect(
+      state,
+      playerId,
+      sourceId,
+      'ryuka_mage',
+    )
+    if (blocked) return blocked
+  }
+  const mon =
+    state.players[playerId].field[
+      findFieldIndex(state.players[playerId], sourceId)
+    ]!
+  let next: GameState = {
+    ...state,
+    interaction: { type: 'ryuka_fetch', sourceId, ownerId: playerId },
+    selectedCardId: getCard(mon.cardId).id,
+  }
+  next = log(
+    next,
+    `จอมเวทย์ ริวกะ — เลือก「คาถา」จากสุสานขึ้นมือ (เปิดใช้ชื่อเดียวกันเทิร์นนี้ทำผล 2 รอบ)`,
+  )
+  return next
+}
+
+export function cancelRyukaFetch(state: GameState): GameState {
+  if (state.interaction.type !== 'ryuka_fetch') return state
+  return { ...state, interaction: { type: 'idle' } }
+}
+
+export function pickRyukaFetch(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+): GameState {
+  if (state.interaction.type !== 'ryuka_fetch') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+
+  const { sourceId } = state.interaction
+  let player = { ...state.players[playerId] }
+  const sourceIdx = findFieldIndex(player, sourceId)
+  if (sourceIdx < 0) return state
+  const source = player.field[sourceIdx]!
+  if (!isRyukaCard(source.cardId) || source.effectUsed) return state
+
+  const gyIdx = player.graveyard.findIndex((c) => c.instanceId === instanceId)
+  if (gyIdx < 0) return state
+  const fetched = player.graveyard[gyIdx]
+  if (!isKataSpellOrTrap(fetched.cardId)) return state
+
+  const graveyard = [...player.graveyard]
+  graveyard.splice(gyIdx, 1)
+  const toHand: CardInstance = { ...fetched, faceDown: false }
+  const def = getCard(toHand.cardId)
+  const field = [...player.field]
+  field[sourceIdx] = { ...source, effectUsed: true }
+  const echoNames = [...(player.ryukaEchoNames ?? [])]
+  if (!echoNames.includes(def.nameTh)) echoNames.push(def.nameTh)
+
+  player = {
+    ...player,
+    graveyard,
+    field,
+    hand: [...player.hand, toHand],
+    ryukaEchoNames: echoNames,
+  }
+
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: player },
+    interaction: { type: 'idle' },
+    selectedCardId: def.id,
+  }
+  next = log(
+    next,
+    `ริวกะนำ ${def.nameTh} จากสุสานขึ้นมือ — เปิดใช้「${def.nameTh}」เทิร์นนี้ทำผล 2 รอบ`,
+  )
+  return enforceHandLimit(next, playerId)
+}
+
+export function pickRyukaSleep(
+  state: GameState,
+  playerId: PlayerId,
+  monsterInstanceId: string,
+): GameState {
+  if (state.interaction.type !== 'ryuka_sleep') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+  if (state.winner) return state
+
+  const oppId = otherPlayer(playerId)
+  let opponent = { ...state.players[oppId] }
+  const mIdx = findFieldIndex(opponent, monsterInstanceId)
+  if (mIdx < 0) return state
+  const target = opponent.field[mIdx]!
+
+  const field = [...opponent.field]
+  field[mIdx] = {
+    ...target,
+    asleepUntil: oppId,
+    canAttack: false,
+    hasAttacked: true,
+  }
+  opponent = { ...opponent, field }
+
+  const targetDef = getCard(target.cardId)
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [oppId]: opponent },
+    interaction: { type: 'idle' },
+    selectedCardId: targetDef.id,
+  }
+  next = log(
+    next,
+    `ริวกะ — ${targetDef.nameTh} นอนและไม่ตื่นจนกว่าจะจบเทิร์นของ ${opponent.name}`,
+  )
+  return next
+}
+
+export function cancelRyukaSleep(state: GameState): GameState {
+  if (state.interaction.type !== 'ryuka_sleep') return state
+  return { ...state, interaction: { type: 'idle' } }
+}
+
+export function canActivateAgatha(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+): boolean {
+  if (state.winner) return false
+  if (state.activePlayer !== playerId) return false
+  if (state.phase !== 'main1' && state.phase !== 'main2') return false
+  if (state.interaction.type !== 'idle') return false
+
+  const player = state.players[playerId]
+  const idx = findFieldIndex(player, instanceId)
+  if (idx < 0) return false
+  const mon = player.field[idx]!
+  if (!isAgathaCard(mon.cardId)) return false
+  if (mon.effectUsed) return false
+
+  // Must recycle from GY first — require at least one คาถา in graveyard
+  return player.graveyard.some((c) => isKataSpellOrTrap(c.cardId))
+}
+
+export function beginAgathaSearch(
+  state: GameState,
+  playerId: PlayerId,
+  sourceId: string,
+  opts?: { skipIntercept?: boolean },
+): GameState {
+  if (!canActivateAgatha(state, playerId, sourceId)) return state
+  if (!opts?.skipIntercept) {
+    const blocked = maybeInterceptMonsterEffect(
+      state,
+      playerId,
+      sourceId,
+      'agatha_mage',
+    )
+    if (blocked) return blocked
+  }
+  const mon =
+    state.players[playerId].field[
+      findFieldIndex(state.players[playerId], sourceId)
+    ]!
+  let next: GameState = {
+    ...state,
+    interaction: {
+      type: 'agatha_search',
+      sourceId,
+      ownerId: playerId,
+      step: 'gy',
+    },
+    selectedCardId: getCard(mon.cardId).id,
+  }
+  next = log(
+    next,
+    `จอมเวทย์ อากาธา — เลือก「คาถา」จากสุสานกลับเข้าเด็ค`,
+  )
+  return next
+}
+
+export function cancelAgathaSearch(state: GameState): GameState {
+  if (state.interaction.type !== 'agatha_search') return state
+  return { ...state, interaction: { type: 'idle' } }
+}
+
+/** Step 1: GY → deck. Step 2: deck → hand + mage buff. */
+export function pickAgathaSearch(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+): GameState {
+  if (state.interaction.type !== 'agatha_search') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+
+  const { sourceId, step } = state.interaction
+  let player = { ...state.players[playerId] }
+  const sourceIdx = findFieldIndex(player, sourceId)
+  if (sourceIdx < 0) return state
+  const source = player.field[sourceIdx]!
+  if (!isAgathaCard(source.cardId)) return state
+  if (source.effectUsed) return state
+
+  if (step === 'gy') {
+    const gyIdx = player.graveyard.findIndex((c) => c.instanceId === instanceId)
+    if (gyIdx < 0) return state
+    const card = player.graveyard[gyIdx]
+    if (!isKataSpellOrTrap(card.cardId)) return state
+
+    const graveyard = [...player.graveyard]
+    graveyard.splice(gyIdx, 1)
+    const deck = shuffle([...player.deck, { ...card, faceDown: false }])
+    player = { ...player, graveyard, deck }
+
+    const def = getCard(card.cardId)
+    let next: GameState = {
+      ...state,
+      players: { ...state.players, [playerId]: player },
+      interaction: {
+        type: 'agatha_search',
+        sourceId,
+        ownerId: playerId,
+        step: 'deck',
+      },
+      selectedCardId: def.id,
+    }
+    next = log(
+      next,
+      `อากาธาคืน ${def.nameTh} เข้าเด็ค — เลือกคาถาจากเด็คขึ้นมือ`,
+    )
+    return next
+  }
+
+  // step === 'deck'
+  const deckIdx = player.deck.findIndex((c) => c.instanceId === instanceId)
+  if (deckIdx < 0) return state
+  const fetched = player.deck[deckIdx]
+  if (!isKataSpellOrTrap(fetched.cardId)) return state
+
+  const deck = [...player.deck]
+  deck.splice(deckIdx, 1)
+  const toHand: CardInstance = { ...fetched, faceDown: false }
+  const field = player.field.map((m) => {
+    if (!m) return m
+    let next = m
+    if (m.instanceId === sourceId) {
+      next = { ...next, effectUsed: true }
+    }
+    if (isMage(m.cardId)) {
+      next = { ...next, tempAtkMod: (next.tempAtkMod ?? 0) + 3 }
+    }
+    return next
+  })
+
+  player = {
+    ...player,
+    deck: shuffle(deck),
+    hand: [...player.hand, toHand],
+    field,
+  }
+
+  const def = getCard(toHand.cardId)
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: player },
+    interaction: { type: 'idle' },
+    selectedCardId: def.id,
+  }
+  next = log(
+    next,
+    `อากาธานำ ${def.nameTh} จากเด็คขึ้นมือ — จอมเวทย์ทั้งหมด ATK +3 จนจบเทิร์น`,
+  )
+  return enforceHandLimit(next, playerId)
+}
+
+function isNoahCard(cardId: string): boolean {
+  return getCard(cardId).effectId === 'noah_mage'
+}
+
+/** Resolve a milled 「คาถา」 effect (no cost paid — Noah OPT) */
+function resolveMilledKataEffect(
+  state: GameState,
+  playerId: PlayerId,
+  cardId: string,
+): GameState {
+  const def = getCard(cardId)
+  let player = { ...state.players[playerId] }
+  let next: GameState = state
+
+  if (def.effectId === 'energy_charge') {
+    const echo = hasRyukaEcho(player, cardId)
+    const times = echo ? 2 : 1
+    player = { ...player, energy: player.energy + 3 * times }
+    next = {
+      ...state,
+      players: { ...state.players, [playerId]: player },
+    }
+    next = log(
+      next,
+      `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — พลังงาน +${3 * times} (รวม ${player.energy})${
+        echo ? ' · ริวกะทำซ้ำ' : ''
+      }`,
+    )
+    return next
+  }
+
+  if (def.effectId === 'heavenly_voice') {
+    const echo = hasRyukaEcho(player, cardId)
+    const times = echo ? 2 : 1
+    const before = player.hand.length
+    player = drawCards(player, 2 * times)
+    const drawn = player.hand.length - before
+    next = {
+      ...state,
+      players: { ...state.players, [playerId]: player },
+    }
+    next = log(
+      next,
+      `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — จั่ว ${drawn} ใบ${
+        echo ? ' · ริวกะทำซ้ำ' : ''
+      }`,
+    )
+    return enforceHandLimit(next, playerId)
+  }
+
+  if (def.effectId === 'kata_guardian') {
+    if (!player.field.some((m) => m && isMage(m.cardId))) {
+      next = log(
+        next,
+        `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — ไม่มีจอมเวทย์บนสนาม`,
+      )
+      return next
+    }
+    player = queueRyukaDouble(player, cardId)
+    next = {
+      ...state,
+      players: { ...state.players, [playerId]: player },
+      interaction: {
+        type: 'guardian_pick',
+        spellInstanceId: null,
+        ownerId: playerId,
+      },
+    }
+    next = log(
+      next,
+      `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — เลือกจอมเวทย์เพื่อล็อก`,
+    )
+    return next
+  }
+
+  if (def.effectId === 'kata_prepare') {
+    if (!canAddSpellTrap(player)) {
+      next = log(
+        next,
+        `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — โซนเวทย์เต็ม`,
+      )
+      return next
+    }
+    let gyIdx = -1
+    for (let i = player.graveyard.length - 1; i >= 0; i--) {
+      if (player.graveyard[i].cardId === cardId) {
+        gyIdx = i
+        break
+      }
+    }
+    if (gyIdx < 0) return next
+    const fromGy = player.graveyard[gyIdx]
+    const graveyard = [...player.graveyard]
+    graveyard.splice(gyIdx, 1)
+    const echo = hasRyukaEcho(player, cardId)
+    const turns = echo ? 6 : 3
+    player = {
+      ...player,
+      graveyard,
+      spellTrap: [
+        ...player.spellTrap,
+        {
+          ...fromGy,
+          faceDown: false,
+          continuousTurnsLeft: turns,
+        },
+      ],
+    }
+    next = {
+      ...state,
+      players: { ...state.players, [playerId]: player },
+    }
+    next = log(
+      next,
+      `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — วางเป็นเวทย์ต่อเนื่อง (เหลือ ${turns} เทิร์นของเรา)${
+        echo ? ' · ริวกะทำซ้ำ' : ''
+      }`,
+    )
+    return next
+  }
+
+  if (def.effectId === 'kata_buddy') {
+    const mages = player.field.filter((m) => m && isMage(m.cardId))
+    if (mages.length < 2) {
+      next = log(
+        next,
+        `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — จอมเวทย์ไม่ครบ 2 ตัว`,
+      )
+      return next
+    }
+    player = queueRyukaDouble(player, cardId)
+    next = {
+      ...state,
+      players: { ...state.players, [playerId]: player },
+      interaction: {
+        type: 'buddy_pick',
+        spellInstanceId: null,
+        ownerId: playerId,
+      },
+    }
+    next = log(
+      next,
+      `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — เลือกจอมเวทย์ 2 ตัวเพื่อรวมพลัง`,
+    )
+    return next
+  }
+
+  if (def.effectId === 'kata_hypnosis') {
+    const opp = state.players[otherPlayer(playerId)]
+    if (opp.field.filter((m) => m !== null).length < 2) {
+      next = log(
+        next,
+        `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — มอนสเตอร์ฝ่ายตรงข้ามไม่ครบ 2 ตัว`,
+      )
+      return next
+    }
+    player = queueRyukaDouble(player, cardId)
+    next = {
+      ...state,
+      players: { ...state.players, [playerId]: player },
+      interaction: {
+        type: 'hypnosis_pick',
+        spellInstanceId: null,
+        ownerId: playerId,
+      },
+    }
+    next = log(
+      next,
+      `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — เลือกมอนสเตอร์ฝ่ายตรงข้าม 2 ตัวให้ต่อสู้กัน`,
+    )
+    return next
+  }
+
+  if (def.effectId === 'kata_blink') {
+    if (!player.field.some((z) => z === null)) {
+      next = log(
+        next,
+        `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — ไม่มีโซนว่าง`,
+      )
+      return next
+    }
+    const hasMage =
+      player.deck.some(
+        (c) => isMage(c.cardId) && canFreePlaceMonster(state, playerId, c.cardId),
+      ) ||
+      player.graveyard.some(
+        (c) => isMage(c.cardId) && canFreePlaceMonster(state, playerId, c.cardId),
+      )
+    if (!hasMage) {
+      next = log(
+        next,
+        `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — ไม่มีจอมเวทย์ในเด็ค/สุสาน`,
+      )
+      return next
+    }
+    player = queueRyukaDouble(player, cardId)
+    next = {
+      ...state,
+      players: { ...state.players, [playerId]: player },
+      interaction: {
+        type: 'teleport_pick',
+        spellInstanceId: null,
+        ownerId: playerId,
+      },
+    }
+    next = log(
+      next,
+      `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา) — เลือกจอมเวทย์จากเด็คหรือสุสานเพื่ออัญเชิญ`,
+    )
+    return next
+  }
+
+  // Traps / complex spells: milled as “used” for kata triggers only
+  next = log(
+    next,
+    `${player.name} ใช้ ${def.nameTh} จากเด็ค (โนอา)${
+      def.type === 'trap' ? ' — กับดักไม่มีเป้าหมายในตอนนี้' : ''
+    }`,
+  )
+  return next
+}
+
+export function canActivateNoah(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+): boolean {
+  if (state.winner) return false
+  if (state.activePlayer !== playerId) return false
+  if (state.phase !== 'main1' && state.phase !== 'main2') return false
+  if (state.interaction.type !== 'idle') return false
+
+  const player = state.players[playerId]
+  const idx = findFieldIndex(player, instanceId)
+  if (idx < 0) return false
+  const mon = player.field[idx]!
+  if (!isNoahCard(mon.cardId)) return false
+  if (mon.effectUsed) return false
+
+  return player.deck.some((c) => isKataSpellOrTrap(c.cardId))
+}
+
+export function beginNoahMill(
+  state: GameState,
+  playerId: PlayerId,
+  sourceId: string,
+  opts?: { skipIntercept?: boolean },
+): GameState {
+  if (!canActivateNoah(state, playerId, sourceId)) return state
+  if (!opts?.skipIntercept) {
+    const blocked = maybeInterceptMonsterEffect(
+      state,
+      playerId,
+      sourceId,
+      'noah_mage',
+    )
+    if (blocked) return blocked
+  }
+  const mon =
+    state.players[playerId].field[
+      findFieldIndex(state.players[playerId], sourceId)
+    ]!
+  let next: GameState = {
+    ...state,
+    interaction: { type: 'noah_mill', sourceId, ownerId: playerId },
+    selectedCardId: getCard(mon.cardId).id,
+  }
+  next = log(
+    next,
+    `จอมเวทย์ โนอา — เลือก「คาถา」จากเด็คลงสุสานเพื่อใช้ความสามารถ`,
+  )
+  return next
+}
+
+export function cancelNoahMill(state: GameState): GameState {
+  if (state.interaction.type !== 'noah_mill') return state
+  return { ...state, interaction: { type: 'idle' } }
+}
+
+export function pickNoahMill(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+): GameState {
+  if (state.interaction.type !== 'noah_mill') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+
+  const { sourceId } = state.interaction
+  let player = { ...state.players[playerId] }
+  const sourceIdx = findFieldIndex(player, sourceId)
+  if (sourceIdx < 0) return state
+  const source = player.field[sourceIdx]!
+  if (!isNoahCard(source.cardId) || source.effectUsed) return state
+
+  const deckIdx = player.deck.findIndex((c) => c.instanceId === instanceId)
+  if (deckIdx < 0) return state
+  const milled = player.deck[deckIdx]
+  if (!isKataSpellOrTrap(milled.cardId)) return state
+
+  const deck = [...player.deck]
+  deck.splice(deckIdx, 1)
+  const field = [...player.field]
+  field[sourceIdx] = { ...source, effectUsed: true }
+  player = {
+    ...player,
+    deck: shuffle(deck),
+    field,
+    graveyard: [...player.graveyard, { ...milled, faceDown: false }],
+  }
+
+  const def = getCard(milled.cardId)
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: player },
+    interaction: { type: 'idle' },
+    selectedCardId: def.id,
+  }
+  next = log(next, `โนอาส่ง ${def.nameTh} จากเด็คลงสุสาน`)
+  next = resolveMilledKataEffect(next, playerId, milled.cardId)
+  next = afterKataActivated(next, playerId, milled.cardId)
+  if (next.interaction.type === 'idle') {
+    next = settleAfterKataResolution(next, playerId)
+  }
+  return checkWinner(next)
+}
+
+export function pickGuardianTarget(
+  state: GameState,
+  playerId: PlayerId,
+  monsterInstanceId: string,
+): GameState {
+  if (state.interaction.type !== 'guardian_pick') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+  if (state.winner) return state
+
+  const { spellInstanceId } = state.interaction
+  let player = { ...state.players[playerId] }
+  const mIdx = findFieldIndex(player, monsterInstanceId)
+  if (mIdx < 0) return state
+  const target = player.field[mIdx]!
+  if (!isMage(target.cardId)) return state
+
+  const lockUntil = otherPlayer(playerId)
+  const field = [...player.field]
+  field[mIdx] = { ...target, fieldLockUntil: lockUntil }
+
+  let spellNote = ''
+  if (spellInstanceId) {
+    const stIdx = findSpellTrapIndex(player, spellInstanceId)
+    if (stIdx < 0) return state
+    const spellCard = player.spellTrap[stIdx]
+    const spellTrap = [...player.spellTrap]
+    spellTrap.splice(stIdx, 1)
+    player = {
+      ...player,
+      field,
+      spellTrap,
+      graveyard: [...player.graveyard, { ...spellCard, faceDown: false }],
+    }
+    spellNote = getCard(spellCard.cardId).nameTh
+  } else {
+    player = { ...player, field }
+    spellNote = 'คาถาผู้ป้องกัน'
+  }
+
+  const targetDef = getCard(target.cardId)
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: player },
+    interaction: { type: 'idle' },
+    selectedCardId: targetDef.id,
+  }
+  next = log(
+    next,
+    `${spellNote} — ${targetDef.nameTh} ถูกล็อกจนจบเทิร์นของ ${state.players[lockUntil].name}`,
+  )
+  return settleAfterKataResolution(next, playerId)
+}
+
+export function cancelGuardianPick(state: GameState): GameState {
+  if (state.interaction.type !== 'guardian_pick') return state
+  const { spellInstanceId, ownerId } = state.interaction
+  if (!spellInstanceId) {
+    return settleAfterKataResolution(
+      { ...state, interaction: { type: 'idle' } },
+      ownerId,
+    )
+  }
+  // Refund: leave spell on ST and go idle — player already paid; send to GY without effect
+  let player = { ...state.players[ownerId] }
+  const stIdx = findSpellTrapIndex(player, spellInstanceId)
+  if (stIdx >= 0) {
+    const spellCard = player.spellTrap[stIdx]
+    const spellTrap = [...player.spellTrap]
+    spellTrap.splice(stIdx, 1)
+    player = {
+      ...player,
+      spellTrap,
+      graveyard: [...player.graveyard, { ...spellCard, faceDown: false }],
+    }
+  }
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [ownerId]: player },
+    interaction: { type: 'idle' },
+  }
+  next = log(next, `ยกเลิกคาถาผู้ป้องกัน`)
+  return next
+}
+
+function finishBuddySpellToGy(
+  player: PlayerState,
+  spellInstanceId: string | null,
+): { player: PlayerState; spellNote: string } {
+  if (!spellInstanceId) {
+    return { player, spellNote: 'คาถาคู่หู' }
+  }
+  const stIdx = findSpellTrapIndex(player, spellInstanceId)
+  if (stIdx < 0) return { player, spellNote: 'คาถาคู่หู' }
+  const spellCard = player.spellTrap[stIdx]
+  const spellTrap = [...player.spellTrap]
+  spellTrap.splice(stIdx, 1)
+  return {
+    player: {
+      ...player,
+      spellTrap,
+      graveyard: [...player.graveyard, { ...spellCard, faceDown: false }],
+    },
+    spellNote: getCard(spellCard.cardId).nameTh,
+  }
+}
+
+export function pickBuddyTarget(
+  state: GameState,
+  playerId: PlayerId,
+  monsterInstanceId: string,
+): GameState {
+  if (state.interaction.type !== 'buddy_pick') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+  if (state.winner) return state
+
+  const { spellInstanceId, firstId } = state.interaction
+  const player = state.players[playerId]
+  const mIdx = findFieldIndex(player, monsterInstanceId)
+  if (mIdx < 0) return state
+  const target = player.field[mIdx]!
+  if (!isMage(target.cardId)) return state
+
+  // First pick — wait for second
+  if (!firstId) {
+    let next: GameState = {
+      ...state,
+      interaction: {
+        type: 'buddy_pick',
+        spellInstanceId,
+        ownerId: playerId,
+        firstId: monsterInstanceId,
+      },
+      selectedCardId: getCard(target.cardId).id,
+    }
+    next = log(
+      next,
+      `คาถาคู่หู — เลือก ${getCard(target.cardId).nameTh} เป็นตัวแรก · เลือกจอมเวทย์ตัวที่สอง`,
+    )
+    return next
+  }
+
+  if (monsterInstanceId === firstId) return state
+
+  const firstIdx = findFieldIndex(player, firstId)
+  if (firstIdx < 0) return state
+  const first = player.field[firstIdx]!
+  if (!isMage(first.cardId)) return state
+
+  const atkA = getEffectiveAtk(state, playerId, first.cardId, first.instanceId)
+  const atkB = getEffectiveAtk(state, playerId, target.cardId, target.instanceId)
+  const combined = atkA + atkB
+
+  const field = [...player.field]
+  const baseA = getCard(first.cardId).atk ?? 0
+  const baseB = getCard(target.cardId).atk ?? 0
+  field[firstIdx] = {
+    ...first,
+    atkMod: combined - baseA,
+    tempAtkMod: undefined,
+  }
+  field[mIdx] = {
+    ...target,
+    atkMod: combined - baseB,
+    tempAtkMod: undefined,
+  }
+
+  let nextPlayer: PlayerState = { ...player, field }
+  const finished = finishBuddySpellToGy(nextPlayer, spellInstanceId)
+  nextPlayer = finished.player
+
+  const nameA = getCard(first.cardId).nameTh
+  const nameB = getCard(target.cardId).nameTh
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: nextPlayer },
+    interaction: { type: 'idle' },
+    selectedCardId: getCard(target.cardId).id,
+  }
+  next = log(
+    next,
+    `${finished.spellNote} — ${nameA} (${atkA}) + ${nameB} (${atkB}) = ${combined} · ทั้งสองตัว ATK เป็น ${combined}`,
+  )
+  return settleAfterKataResolution(next, playerId)
+}
+
+export function cancelBuddyPick(state: GameState): GameState {
+  if (state.interaction.type !== 'buddy_pick') return state
+  const { spellInstanceId, ownerId } = state.interaction
+  if (!spellInstanceId) {
+    return settleAfterKataResolution(
+      { ...state, interaction: { type: 'idle' } },
+      ownerId,
+    )
+  }
+  let player = { ...state.players[ownerId] }
+  const finished = finishBuddySpellToGy(player, spellInstanceId)
+  player = finished.player
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [ownerId]: player },
+    interaction: { type: 'idle' },
+  }
+  next = log(next, `ยกเลิก ${finished.spellNote}`)
+  return settleAfterKataResolution(next, ownerId)
+}
+
+function finishHypnosisSpellToGy(
+  player: PlayerState,
+  spellInstanceId: string | null,
+): { player: PlayerState; spellNote: string } {
+  if (!spellInstanceId) {
+    return { player, spellNote: 'คาถาสะกดจิต' }
+  }
+  const stIdx = findSpellTrapIndex(player, spellInstanceId)
+  if (stIdx < 0) return { player, spellNote: 'คาถาสะกดจิต' }
+  const spellCard = player.spellTrap[stIdx]
+  const spellTrap = [...player.spellTrap]
+  spellTrap.splice(stIdx, 1)
+  return {
+    player: {
+      ...player,
+      spellTrap,
+      graveyard: [...player.graveyard, { ...spellCard, faceDown: false }],
+    },
+    spellNote: getCard(spellCard.cardId).nameTh,
+  }
+}
+
+/** Force two monsters on the same controller's field to clash by ATK */
+function resolveSameSideClash(
+  state: GameState,
+  controllerId: PlayerId,
+  aInstanceId: string,
+  bInstanceId: string,
+): {
+  state: GameState
+  bothDestroyed: boolean
+  note: string
+} {
+  let controller = { ...state.players[controllerId] }
+  const aIdx = findFieldIndex(controller, aInstanceId)
+  const bIdx = findFieldIndex(controller, bInstanceId)
+  if (aIdx < 0 || bIdx < 0) {
+    return { state, bothDestroyed: false, note: '' }
+  }
+
+  const monA = controller.field[aIdx]!
+  const monB = controller.field[bIdx]!
+  const defA = getCard(monA.cardId)
+  const defB = getCard(monB.cardId)
+  const atkA = getEffectiveAtk(state, controllerId, monA.cardId, monA.instanceId)
+  const atkB = getEffectiveAtk(state, controllerId, monB.cardId, monB.instanceId)
+  const lockA = isFieldLocked(monA)
+  const lockB = isFieldLocked(monB)
+
+  const field = [...controller.field]
+  let gy = [...controller.graveyard]
+  let destroyedA = false
+  let destroyedB = false
+  const destroyNotes: string[] = []
+
+  const tryDestroy = (idx: number, mon: CardInstance, locked: boolean): boolean => {
+    if (locked) return false
+    field[idx] = null
+    let p: PlayerState = {
+      ...controller,
+      field: [...field],
+      graveyard: [...gy, { ...mon, faceDown: false }],
+    }
+    gy = p.graveyard
+    const res = afterMonsterDestroyed(p, mon)
+    p = res.player
+    // Preserve nulls we already set
+    const nf = [...p.field]
+    for (let i = 0; i < field.length; i++) {
+      if (field[i] === null) nf[i] = null
+    }
+    controller = { ...p, field: nf }
+    for (let i = 0; i < field.length; i++) field[i] = nf[i] ?? null
+    if (res.note) destroyNotes.push(res.note)
+    return true
+  }
+
+  if (atkA > atkB) {
+    destroyedB = tryDestroy(bIdx, monB, lockB)
+  } else if (atkB > atkA) {
+    destroyedA = tryDestroy(aIdx, monA, lockA)
+  } else {
+    destroyedA = tryDestroy(aIdx, monA, lockA)
+    destroyedB = tryDestroy(bIdx, monB, lockB)
+  }
+
+  const bothDestroyed = destroyedA && destroyedB
+
+  let note = `${defA.nameTh} (${atkA}) vs ${defB.nameTh} (${atkB})`
+  if (atkA > atkB) {
+    note += lockB
+      ? ` — ${defB.nameTh} ถูกล็อก รอด`
+      : ` — ทำลาย ${defB.nameTh}`
+  } else if (atkB > atkA) {
+    note += lockA
+      ? ` — ${defA.nameTh} ถูกล็อก รอด`
+      : ` — ทำลาย ${defA.nameTh}`
+  } else {
+    const parts: string[] = []
+    if (destroyedA) parts.push(`ทำลาย ${defA.nameTh}`)
+    else if (lockA) parts.push(`${defA.nameTh} ล็อก`)
+    if (destroyedB) parts.push(`ทำลาย ${defB.nameTh}`)
+    else if (lockB) parts.push(`${defB.nameTh} ล็อก`)
+    note += ` — พลังเท่ากัน · ${parts.join(' · ')}`
+  }
+
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [controllerId]: controller },
+    interaction: { type: 'idle' },
+  }
+  for (const n of destroyNotes) next = log(next, n)
+
+  return { state: next, bothDestroyed, note }
+}
+
+export function pickHypnosisTarget(
+  state: GameState,
+  playerId: PlayerId,
+  monsterInstanceId: string,
+): GameState {
+  if (state.interaction.type !== 'hypnosis_pick') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+  if (state.winner) return state
+
+  const { spellInstanceId, firstId } = state.interaction
+  const oppId = otherPlayer(playerId)
+  const opp = state.players[oppId]
+  const mIdx = findFieldIndex(opp, monsterInstanceId)
+  if (mIdx < 0) return state
+  const target = opp.field[mIdx]!
+
+  if (!firstId) {
+    let next: GameState = {
+      ...state,
+      interaction: {
+        type: 'hypnosis_pick',
+        spellInstanceId,
+        ownerId: playerId,
+        firstId: monsterInstanceId,
+      },
+      selectedCardId: getCard(target.cardId).id,
+    }
+    next = log(
+      next,
+      `คาถาสะกดจิต — เลือก ${getCard(target.cardId).nameTh} เป็นตัวแรก · เลือกตัวที่สอง`,
+    )
+    return next
+  }
+
+  if (monsterInstanceId === firstId) return state
+  const firstIdx = findFieldIndex(opp, firstId)
+  if (firstIdx < 0) return state
+
+  const clash = resolveSameSideClash(state, oppId, firstId, monsterInstanceId)
+  let next = clash.state
+  let player = { ...next.players[playerId] }
+  const finished = finishHypnosisSpellToGy(player, spellInstanceId)
+  player = finished.player
+  next = {
+    ...next,
+    players: { ...next.players, [playerId]: player },
+    interaction: { type: 'idle' },
+  }
+  next = log(next, `${finished.spellNote} — ${clash.note}`)
+
+  if (clash.bothDestroyed) {
+    const before = player.hand.length
+    player = drawCards(player, 1)
+    const drawn = player.hand.length - before
+    next = {
+      ...next,
+      players: { ...next.players, [playerId]: player },
+    }
+    if (drawn > 0) {
+      next = log(
+        next,
+        `${finished.spellNote} — ทั้งสองถูกทำลาย · จั่ว ${drawn} ใบ`,
+      )
+      next = enforceHandLimit(next, playerId)
+    }
+  }
+
+  return settleAfterKataResolution(next, playerId)
+}
+
+export function cancelHypnosisPick(state: GameState): GameState {
+  if (state.interaction.type !== 'hypnosis_pick') return state
+  const { spellInstanceId, ownerId } = state.interaction
+  if (!spellInstanceId) {
+    return settleAfterKataResolution(
+      { ...state, interaction: { type: 'idle' } },
+      ownerId,
+    )
+  }
+  let player = { ...state.players[ownerId] }
+  const finished = finishHypnosisSpellToGy(player, spellInstanceId)
+  player = finished.player
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [ownerId]: player },
+    interaction: { type: 'idle' },
+  }
+  next = log(next, `ยกเลิก ${finished.spellNote}`)
+  return settleAfterKataResolution(next, ownerId)
+}
+
+function finishBlinkSpellToGy(
+  player: PlayerState,
+  spellInstanceId: string | null,
+): { player: PlayerState; spellNote: string } {
+  if (!spellInstanceId) {
+    return { player, spellNote: 'คาถาย้ายฉับพลัน' }
+  }
+  const stIdx = findSpellTrapIndex(player, spellInstanceId)
+  if (stIdx < 0) return { player, spellNote: 'คาถาย้ายฉับพลัน' }
+  const spellCard = player.spellTrap[stIdx]
+  const spellTrap = [...player.spellTrap]
+  spellTrap.splice(stIdx, 1)
+  return {
+    player: {
+      ...player,
+      spellTrap,
+      graveyard: [...player.graveyard, { ...spellCard, faceDown: false }],
+    },
+    spellNote: getCard(spellCard.cardId).nameTh,
+  }
+}
+
+/** Blink Incantation — special summon a mage from deck or GY */
+export function pickTeleportSummon(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+  from: 'deck' | 'graveyard',
+): GameState {
+  if (state.interaction.type !== 'teleport_pick') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+  if (state.winner) return state
+
+  const { spellInstanceId } = state.interaction
+  let player = { ...state.players[playerId] }
+
+  let fetched: CardInstance | null = null
+  if (from === 'deck') {
+    const deckIdx = player.deck.findIndex((c) => c.instanceId === instanceId)
+    if (deckIdx < 0) return state
+    fetched = player.deck[deckIdx]
+    if (!isMage(fetched.cardId)) return state
+    if (!canFreePlaceMonster(state, playerId, fetched.cardId)) return state
+    const deck = [...player.deck]
+    deck.splice(deckIdx, 1)
+    player = { ...player, deck: shuffle(deck) }
+  } else {
+    const gyIdx = player.graveyard.findIndex((c) => c.instanceId === instanceId)
+    if (gyIdx < 0) return state
+    fetched = player.graveyard[gyIdx]
+    if (!isMage(fetched.cardId)) return state
+    if (!canFreePlaceMonster(state, playerId, fetched.cardId)) return state
+    const graveyard = [...player.graveyard]
+    graveyard.splice(gyIdx, 1)
+    player = { ...player, graveyard }
+  }
+
+  const zone = player.field.findIndex((z) => z === null)
+  if (zone < 0) return state
+
+  const summoned = resetForSummon(fetched, state.turn)
+  const field = [...player.field]
+  field[zone] = summoned
+  player = { ...player, field }
+
+  const finished = finishBlinkSpellToGy(player, spellInstanceId)
+  player = finished.player
+
+  const oppId = otherPlayer(playerId)
+  const def = getCard(summoned.cardId)
+  const trig = applySummonTriggers(player, state.players[oppId], def.id)
+  player = trig.player
+
+  let next: GameState = {
+    ...state,
+    players: {
+      ...state.players,
+      [playerId]: player,
+      [oppId]: trig.opponent,
+    },
+    interaction: { type: 'idle' },
+    selectedCardId: def.id,
+  }
+  next = log(
+    next,
+    `${finished.spellNote} — อัญเชิญ ${def.nameTh} จาก${from === 'deck' ? 'เด็ค' : 'สุสาน'} โซน ${zone + 1}`,
+  )
+  if (trig.note) next = log(next, trig.note)
+
+  next = afterSummonEffects(next, playerId, def.id, summoned.instanceId)
+  if (next.interaction.type !== 'idle') return next
+  return settleAfterKataResolution(checkWinner(next), playerId)
+}
+
+export function cancelTeleportPick(state: GameState): GameState {
+  if (state.interaction.type !== 'teleport_pick') return state
+  const { spellInstanceId, ownerId } = state.interaction
+  if (!spellInstanceId) {
+    return settleAfterKataResolution(
+      { ...state, interaction: { type: 'idle' } },
+      ownerId,
+    )
+  }
+  let player = { ...state.players[ownerId] }
+  const finished = finishBlinkSpellToGy(player, spellInstanceId)
+  player = finished.player
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [ownerId]: player },
+    interaction: { type: 'idle' },
+  }
+  next = log(next, `ยกเลิก ${finished.spellNote}`)
+  return settleAfterKataResolution(next, ownerId)
 }
 
 /** Warrior summon during Call Reinforcements — pay HP instead of energy */
@@ -3390,6 +5564,7 @@ export function canAttack(
   const idx = findFieldIndex(player, attackerId)
   if (idx < 0) return false
   const m = player.field[idx]!
+  if (m.asleepUntil) return false
   if (!m.canAttack || m.hasAttacked) return false
 
   // Iron Wall: cannot attack without another warrior on our field
@@ -3970,6 +6145,9 @@ export function pickBetaExtraDestroy(
   if (tIdx < 0) return state
 
   const target = defender.field[tIdx]!
+  if (isFieldLocked(target)) {
+    return log(state, `${getCard(target.cardId).nameTh} ถูกล็อก — ทำลายไม่ได้`)
+  }
   const targetDef = getCard(target.cardId)
   const field = [...defender.field]
   field[tIdx] = null
@@ -4087,20 +6265,288 @@ function findTrapByEffect(
   return { fromField, fromHand: -1 }
 }
 
-function trapEffectForWindow(window: 'on_attack' | 'on_destroy'): string {
-  return window === 'on_attack' ? 'death_blast' : 'light_shield'
+function findTrapAmongEffects(
+  player: PlayerState,
+  effectIds: string[],
+  trapInstanceId?: string,
+): { fromField: number; fromHand: number } {
+  if (trapInstanceId !== undefined) {
+    return findTrapByEffect(player, '', trapInstanceId)
+  }
+  for (const effectId of effectIds) {
+    const hit = findTrapByEffect(player, effectId)
+    if (hit.fromField >= 0 || hit.fromHand >= 0) return hit
+  }
+  return { fromField: -1, fromHand: -1 }
 }
 
-/** Eligible traps in hand (and face-down ST) for the current response window */
+/** Barrier Incantation — only when the attack target is a mage on our field */
+export function isBarrierAttackTarget(
+  state: GameState,
+  defenderId: PlayerId,
+  targetInstanceId: string | 'direct',
+): boolean {
+  if (targetInstanceId === 'direct') return false
+  const mon = state.players[defenderId].field.find(
+    (m) => m?.instanceId === targetInstanceId,
+  )
+  return !!mon && isMage(mon.cardId)
+}
+
+function hasKataBarrier(player: PlayerState): boolean {
+  return hasTrapEffect(player, 'kata_barrier')
+}
+
+function hasEligibleOnAttackTrap(
+  state: GameState,
+  defenderId: PlayerId,
+  targetInstanceId: string | 'direct',
+): boolean {
+  const defender = state.players[defenderId]
+  if (hasDeathBlast(defender)) return true
+  return (
+    hasKataBarrier(defender) &&
+    isBarrierAttackTarget(state, defenderId, targetInstanceId)
+  )
+}
+
+function onAttackTrapEffectIds(allowBarrier: boolean): string[] {
+  const ids = ['death_blast']
+  if (allowBarrier) ids.push('kata_barrier')
+  return ids
+}
+
+function trapEffectIdsForWindow(
+  window: 'on_attack' | 'on_destroy' | 'on_activate',
+  allowBarrier: boolean,
+): string[] {
+  if (window === 'on_destroy') return ['light_shield']
+  if (window === 'on_activate') return ['kata_intercept']
+  return onAttackTrapEffectIds(allowBarrier)
+}
+
+/** True if defender can activate Intercept Incantation */
+export function canOfferIntercept(
+  state: GameState,
+  defenderId: PlayerId,
+): boolean {
+  if (state.winner) return false
+  // Do not nest while already in an activation-counter window
+  if (
+    state.awaitingTrap &&
+    state.interaction.type === 'trap_response' &&
+    state.interaction.threat.window === 'on_activate'
+  ) {
+    return false
+  }
+  const defender = state.players[defenderId]
+  if (!defender.field.some((m) => m && isMage(m.cardId))) return false
+  return hasTrapEffect(defender, 'kata_intercept')
+}
+
+export type ActivationSourceKind = 'spell' | 'trap' | 'monster_effect'
+
+/** Open on_activate counter window for the opponent of the activator */
+export function openActivationCounter(
+  state: GameState,
+  activatorId: PlayerId,
+  sourceInstanceId: string,
+  sourceKind: ActivationSourceKind,
+  extras?: {
+    resume?: string
+    priorWindow?: 'on_attack' | 'on_destroy'
+    priorTargetInstanceId?: string
+    priorAttackerInstanceId?: string
+  },
+): GameState {
+  const defenderId = otherPlayer(activatorId)
+  if (!canOfferIntercept(state, defenderId)) return state
+
+  let sourceCardId: string | undefined
+  const activator = state.players[activatorId]
+  if (sourceKind === 'spell' || sourceKind === 'trap') {
+    sourceCardId =
+      activator.hand.find((c) => c.instanceId === sourceInstanceId)?.cardId ??
+      activator.spellTrap.find((c) => c.instanceId === sourceInstanceId)?.cardId
+  } else {
+    sourceCardId = activator.field.find(
+      (m) => m?.instanceId === sourceInstanceId,
+    )?.cardId
+  }
+
+  let next: GameState = {
+    ...state,
+    awaitingTrap: true,
+    interaction: {
+      type: 'trap_response',
+      threat: {
+        window: 'on_activate',
+        targetInstanceId: sourceInstanceId,
+        attackerInstanceId: sourceInstanceId,
+        activatorId,
+        sourceKind,
+        resume: extras?.resume,
+        priorWindow: extras?.priorWindow,
+        priorTargetInstanceId: extras?.priorTargetInstanceId,
+        priorAttackerInstanceId: extras?.priorAttackerInstanceId,
+      },
+    },
+    selectedCardId: sourceCardId,
+  }
+  next = log(
+    next,
+    `${state.players[defenderId].name} สามารถใช้คาถาสกัดกั้นได้!`,
+  )
+  return next
+}
+
+/**
+ * If opponent can intercept this monster effect, open the window; otherwise null.
+ * Call at the start of begin* after canActivate checks.
+ */
+function maybeInterceptMonsterEffect(
+  state: GameState,
+  playerId: PlayerId,
+  sourceId: string,
+  resume: string,
+): GameState | null {
+  const defenderId = otherPlayer(playerId)
+  if (!canOfferIntercept(state, defenderId)) return null
+  return openActivationCounter(state, playerId, sourceId, 'monster_effect', {
+    resume,
+  })
+}
+
+function buffOurMagesTempAtk(
+  player: PlayerState,
+  amount: number,
+): PlayerState {
+  const field = player.field.map((m) => {
+    if (!m || !isMage(m.cardId)) return m
+    return { ...m, tempAtkMod: (m.tempAtkMod ?? 0) + amount }
+  })
+  return { ...player, field }
+}
+
+function destroyActivatorSource(
+  state: GameState,
+  activatorId: PlayerId,
+  sourceInstanceId: string,
+  sourceKind: ActivationSourceKind,
+): { state: GameState; destroyedName: string } {
+  let activator = { ...state.players[activatorId] }
+  let destroyedName = 'การ์ด'
+
+  if (sourceKind === 'monster_effect') {
+    const idx = findFieldIndex(activator, sourceInstanceId)
+    if (idx < 0) return { state, destroyedName }
+    const mon = activator.field[idx]!
+    destroyedName = getCard(mon.cardId).nameTh
+    if (isFieldLocked(mon)) {
+      return {
+        state: log(
+          state,
+          `${destroyedName} ถูกล็อก — ทำลายด้วยคาถาสกัดกั้นไม่ได้`,
+        ),
+        destroyedName,
+      }
+    }
+    const field = [...activator.field]
+    field[idx] = null
+    activator = {
+      ...activator,
+      field,
+      graveyard: [...activator.graveyard, { ...mon, faceDown: false }],
+    }
+    const res = afterMonsterDestroyed(activator, mon)
+    activator = res.player
+    let next: GameState = {
+      ...state,
+      players: { ...state.players, [activatorId]: activator },
+    }
+    if (res.note) next = log(next, res.note)
+    return { state: next, destroyedName }
+  }
+
+  // spell / trap from hand or ST
+  const handIdx = findHandIndex(activator, sourceInstanceId)
+  if (handIdx >= 0) {
+    const card = activator.hand[handIdx]
+    destroyedName = getCard(card.cardId).nameTh
+    const hand = [...activator.hand]
+    hand.splice(handIdx, 1)
+    activator = {
+      ...activator,
+      hand,
+      graveyard: [...activator.graveyard, { ...card, faceDown: false }],
+    }
+    return {
+      state: {
+        ...state,
+        players: { ...state.players, [activatorId]: activator },
+      },
+      destroyedName,
+    }
+  }
+  const stIdx = findSpellTrapIndex(activator, sourceInstanceId)
+  if (stIdx >= 0) {
+    const card = activator.spellTrap[stIdx]
+    destroyedName = getCard(card.cardId).nameTh
+    const spellTrap = [...activator.spellTrap]
+    spellTrap.splice(stIdx, 1)
+    activator = {
+      ...activator,
+      spellTrap,
+      graveyard: [...activator.graveyard, { ...card, faceDown: false }],
+    }
+    return {
+      state: {
+        ...state,
+        players: { ...state.players, [activatorId]: activator },
+      },
+      destroyedName,
+    }
+  }
+  return { state, destroyedName }
+}
+
+function resumeMonsterEffectAfterDecline(
+  state: GameState,
+  playerId: PlayerId,
+  sourceId: string,
+  resume: string | undefined,
+): GameState {
+  const opts = { skipIntercept: true as const }
+  switch (resume) {
+    case 'soluy_swap':
+      return beginSoluySwap(state, playerId, sourceId, opts)
+    case 'shorin_mage':
+      return beginShorinSearch(state, playerId, sourceId, opts)
+    case 'saruka_mage':
+      return beginSarukaSearch(state, playerId, sourceId, opts)
+    case 'ryuka_mage':
+      return beginRyukaFetch(state, playerId, sourceId, opts)
+    case 'agatha_mage':
+      return beginAgathaSearch(state, playerId, sourceId, opts)
+    case 'noah_mage':
+      return beginNoahMill(state, playerId, sourceId, opts)
+    default:
+      return state
+  }
+}
+
+/** Eligible traps in hand (and ST) for the current response window */
 export function listTrapsForWindow(
   player: PlayerState,
-  window: 'on_attack' | 'on_destroy',
+  window: 'on_attack' | 'on_destroy' | 'on_activate',
+  options?: { allowBarrier?: boolean },
 ): CardInstance[] {
-  const effectId = trapEffectForWindow(window)
-  const fromHand = player.hand.filter((c) => getCard(c.cardId).effectId === effectId)
-  const fromField = player.spellTrap.filter(
-    (c) => getCard(c.cardId).effectId === effectId,
+  const ids = new Set(
+    trapEffectIdsForWindow(window, options?.allowBarrier ?? false),
   )
+  const match = (c: CardInstance) => ids.has(getCard(c.cardId).effectId ?? '')
+  const fromHand = player.hand.filter(match)
+  const fromField = player.spellTrap.filter(match)
   return [...fromHand, ...fromField]
 }
 
@@ -4170,7 +6616,7 @@ export function declareAttack(
     if (defender.field.some((m) => m !== null)) return state
     state = applySigmaAttackDebuff(state, playerId, attackerInstanceId)
     const sealTraps = attackerSealsTraps(state, playerId, attackerInstanceId)
-    if (hasDeathBlast(state.players[defenderId]) && !sealTraps) {
+    if (hasEligibleOnAttackTrap(state, defenderId, 'direct') && !sealTraps) {
       return {
         ...state,
         awaitingTrap: true,
@@ -4194,7 +6640,10 @@ export function declareAttack(
   state = applySigmaAttackDebuff(state, playerId, attackerInstanceId)
   const sealTraps = attackerSealsTraps(state, playerId, attackerInstanceId)
 
-  if (hasDeathBlast(state.players[defenderId]) && !sealTraps) {
+  if (
+    hasEligibleOnAttackTrap(state, defenderId, targetInstanceId) &&
+    !sealTraps
+  ) {
     return {
       ...state,
       awaitingTrap: true,
@@ -4231,15 +6680,30 @@ export function revealTrap(
     return null
   }
 
-  const effectId = trapEffectForWindow(state.interaction.threat.window)
+  const { threat } = state.interaction
+  const allowBarrier =
+    threat.window === 'on_attack' &&
+    isBarrierAttackTarget(state, defenderId, threat.targetInstanceId)
+  const effectIds = trapEffectIdsForWindow(threat.window, allowBarrier)
+
   let defender = { ...state.players[defenderId] }
-  const { fromField, fromHand } = findTrapByEffect(
+  const { fromField, fromHand } = findTrapAmongEffects(
     defender,
-    effectId,
+    effectIds,
     trapInstanceId,
   )
 
   if (fromField < 0 && fromHand < 0) return null
+
+  if (trapInstanceId !== undefined) {
+    const card =
+      fromField >= 0
+        ? defender.spellTrap[fromField]
+        : defender.hand[fromHand]
+    if (!card || !effectIds.includes(getCard(card.cardId).effectId ?? '')) {
+      return null
+    }
+  }
 
   let spellTrap = [...defender.spellTrap]
   let hand = [...defender.hand]
@@ -4271,14 +6735,175 @@ export function respondTrap(
   defenderId: PlayerId,
   useTrap: boolean,
   trapInstanceId?: string,
+  opts?: { skipInterceptOffer?: boolean },
 ): GameState {
   if (!state.awaitingTrap || state.interaction.type !== 'trap_response') {
     return state
   }
 
   const { threat } = state.interaction
+
+  // —— Activation counter window (Intercept Incantation) ——
+  if (threat.window === 'on_activate') {
+    const activatorId = threat.activatorId ?? otherPlayer(defenderId)
+    const sourceKind = threat.sourceKind ?? 'spell'
+    const sourceInstanceId = threat.targetInstanceId
+
+    if (!useTrap) {
+      let next: GameState = {
+        ...state,
+        awaitingTrap: false,
+        interaction: { type: 'idle' },
+      }
+      if (sourceKind === 'spell') {
+        return {
+          ...next,
+          interaction: {
+            type: 'resume_spell_cast',
+            ownerId: activatorId,
+            instanceId: sourceInstanceId,
+          },
+        }
+      }
+      if (sourceKind === 'monster_effect') {
+        return resumeMonsterEffectAfterDecline(
+          next,
+          activatorId,
+          sourceInstanceId,
+          threat.resume,
+        )
+      }
+      if (
+        sourceKind === 'trap' &&
+        threat.priorWindow &&
+        threat.priorTargetInstanceId !== undefined &&
+        threat.priorAttackerInstanceId
+      ) {
+        // Restore prior attack/destroy window and apply the trap
+        next = {
+          ...next,
+          awaitingTrap: true,
+          interaction: {
+            type: 'trap_response',
+            threat: {
+              window: threat.priorWindow,
+              targetInstanceId: threat.priorTargetInstanceId,
+              attackerInstanceId: threat.priorAttackerInstanceId,
+            },
+          },
+        }
+        return respondTrap(next, activatorId, true, sourceInstanceId, {
+          skipInterceptOffer: true,
+        })
+      }
+      return next
+    }
+
+    // Use Intercept
+    let defender = { ...state.players[defenderId] }
+    const { fromField, fromHand } = findTrapAmongEffects(
+      defender,
+      ['kata_intercept'],
+      trapInstanceId,
+    )
+    if (fromField < 0 && fromHand < 0) {
+      return respondTrap(state, defenderId, false)
+    }
+
+    let trapCard: CardInstance
+    let spellTrap = [...defender.spellTrap]
+    let hand = [...defender.hand]
+    if (fromField >= 0) {
+      trapCard = { ...spellTrap[fromField], faceDown: false }
+      spellTrap.splice(fromField, 1)
+    } else {
+      trapCard = hand[fromHand]
+      hand.splice(fromHand, 1)
+    }
+    if (getCard(trapCard.cardId).effectId !== 'kata_intercept') {
+      return respondTrap(state, defenderId, false)
+    }
+
+    const trapDef = getCard(trapCard.cardId)
+    const trapCost = getEffectiveCost(trapCard, state, defenderId)
+    defender = {
+      ...defender,
+      hand,
+      spellTrap,
+      graveyard: [
+        ...defender.graveyard,
+        { ...trapCard, tempCostOverride: undefined },
+      ],
+      pendingTrapCost: defender.pendingTrapCost + trapCost,
+    }
+
+    let next: GameState = {
+      ...state,
+      players: { ...state.players, [defenderId]: defender },
+      awaitingTrap: false,
+      interaction: { type: 'idle' },
+    }
+
+    const destroyed = destroyActivatorSource(
+      next,
+      activatorId,
+      sourceInstanceId,
+      sourceKind,
+    )
+    next = destroyed.state
+    defender = buffOurMagesTempAtk(next.players[defenderId], 3)
+    next = {
+      ...next,
+      players: { ...next.players, [defenderId]: defender },
+    }
+    next = log(
+      next,
+      `${defender.name} ใช้ ${trapDef.nameTh}! ยกเลิกและทำลาย ${destroyed.destroyedName} · จอมเวทย์ฝั่งเรา ATK +3 จนจบเทิร์น`,
+    )
+    next = afterKataActivated(next, defenderId, trapDef.id)
+
+    // If we countered a trap during attack, continue the attack without that trap
+    if (
+      sourceKind === 'trap' &&
+      threat.priorWindow &&
+      threat.priorAttackerInstanceId
+    ) {
+      const attackOwner = otherPlayer(activatorId)
+      const priorTarget = threat.priorTargetInstanceId
+      if (threat.priorWindow === 'on_attack') {
+        if (!priorTarget || priorTarget === 'direct') {
+          return checkWinner(
+            resolveBattle(next, attackOwner, threat.priorAttackerInstanceId, null),
+          )
+        }
+        return checkWinner(
+          continueAttackResolution(
+            next,
+            attackOwner,
+            threat.priorAttackerInstanceId,
+            priorTarget,
+          ),
+        )
+      }
+      // on_destroy declined effectively — battle proceeds
+      return checkWinner(
+        resolveBattle(
+          next,
+          attackOwner,
+          threat.priorAttackerInstanceId,
+          priorTarget && priorTarget !== 'direct' ? priorTarget : null,
+        ),
+      )
+    }
+
+    return checkWinner(settleAfterKataResolution(next, defenderId))
+  }
+
   const attackerId = otherPlayer(defenderId)
-  const effectId = trapEffectForWindow(threat.window)
+  const allowBarrier =
+    threat.window === 'on_attack' &&
+    isBarrierAttackTarget(state, defenderId, threat.targetInstanceId)
+  const effectIds = trapEffectIdsForWindow(threat.window, allowBarrier)
   const battleTarget =
     threat.targetInstanceId === 'direct' ? null : threat.targetInstanceId
 
@@ -4307,15 +6932,39 @@ export function respondTrap(
     )
   }
 
+  // Before applying attack/destroy trap — offer Intercept to the other player
+  if (!opts?.skipInterceptOffer) {
+    const counterId = attackerId
+    if (canOfferIntercept(state, counterId)) {
+      return openActivationCounter(
+        state,
+        defenderId,
+        trapInstanceId ??
+          listTrapsForWindow(state.players[defenderId], threat.window, {
+            allowBarrier,
+          })[0]?.instanceId ??
+          '',
+        'trap',
+        {
+          priorWindow: threat.window,
+          priorTargetInstanceId: threat.targetInstanceId,
+          priorAttackerInstanceId: threat.attackerInstanceId,
+        },
+      )
+    }
+  }
+
   let defender = { ...state.players[defenderId] }
-  const { fromField, fromHand } = findTrapByEffect(
+  const { fromField, fromHand } = findTrapAmongEffects(
     defender,
-    effectId,
+    effectIds,
     trapInstanceId,
   )
 
   if (fromField < 0 && fromHand < 0) {
-    return respondTrap(state, defenderId, false)
+    return respondTrap(state, defenderId, false, undefined, {
+      skipInterceptOffer: true,
+    })
   }
 
   let trapCard: CardInstance
@@ -4330,14 +6979,22 @@ export function respondTrap(
     hand.splice(fromHand, 1)
   }
 
+  // Validate eligibility when instance was specified
+  if (!effectIds.includes(getCard(trapCard.cardId).effectId ?? '')) {
+    return respondTrap(state, defenderId, false, undefined, {
+      skipInterceptOffer: true,
+    })
+  }
+
   const trapDef = getCard(trapCard.cardId)
+  const trapCost = getEffectiveCost(trapCard, state, defenderId)
 
   defender = {
     ...defender,
     hand,
     spellTrap,
-    graveyard: [...defender.graveyard, trapCard],
-    pendingTrapCost: defender.pendingTrapCost + trapDef.cost,
+    graveyard: [...defender.graveyard, { ...trapCard, tempCostOverride: undefined }],
+    pendingTrapCost: defender.pendingTrapCost + trapCost,
   }
 
   if (trapDef.effectId === 'death_blast') {
@@ -4361,6 +7018,7 @@ export function respondTrap(
       next,
       `${defender.name} ใช้ ${trapDef.nameTh}! มอนสเตอร์บนสนามของ ${attacker.name} ATK −2 ทุกตัว`,
     )
+    next = afterKataActivated(next, defenderId, trapDef.id)
 
     if (battleTarget === null) {
       return checkWinner(
@@ -4375,6 +7033,56 @@ export function respondTrap(
         battleTarget,
       ),
     )
+  }
+
+  if (trapDef.effectId === 'kata_barrier') {
+    // Negate attack + halve target mage ATK
+    let attacker = { ...state.players[attackerId] }
+    const aIdx = findFieldIndex(attacker, threat.attackerInstanceId)
+    if (aIdx >= 0) {
+      const field = [...attacker.field]
+      field[aIdx] = { ...field[aIdx]!, hasAttacked: true }
+      attacker = { ...attacker, field }
+    }
+
+    const tIdx =
+      battleTarget !== null ? findFieldIndex(defender, battleTarget) : -1
+    let halvedNote = ''
+    if (tIdx >= 0) {
+      const target = defender.field[tIdx]!
+      const before = getEffectiveAtk(
+        { ...state, players: { ...state.players, [defenderId]: defender } },
+        defenderId,
+        target.cardId,
+        target.instanceId,
+      )
+      const after = Math.floor(before / 2)
+      const delta = after - before
+      const field = [...defender.field]
+      field[tIdx] = {
+        ...target,
+        atkMod: (target.atkMod ?? 0) + delta,
+      }
+      defender = { ...defender, field }
+      halvedNote = ` · ${getCard(target.cardId).nameTh} ATK ${before} → ${after}`
+    }
+
+    let next: GameState = {
+      ...state,
+      players: {
+        ...state.players,
+        [defenderId]: defender,
+        [attackerId]: attacker,
+      },
+      awaitingTrap: false,
+      interaction: { type: 'idle' },
+    }
+    next = log(
+      next,
+      `${defender.name} ใช้ ${trapDef.nameTh}! การโจมตีไร้ผล${halvedNote}`,
+    )
+    next = afterKataActivated(next, defenderId, trapDef.id)
+    return checkWinner(settleAfterKataResolution(next, defenderId))
   }
 
   // Light Shield — mark attacker as having attacked; target survives
@@ -4396,6 +7104,7 @@ export function respondTrap(
     next,
     `${defender.name} ใช้ ${trapDef.nameTh}! มอนสเตอร์รอดจากการถูกทำลาย (ค่าร่ายจะถูกหักเทิร์นหน้า)`,
   )
+  next = afterKataActivated(next, defenderId, trapDef.id)
   return checkWinner(next)
 }
 
@@ -4548,15 +7257,27 @@ function resolveBattle(
   //   higher → destroy defender (no pierce to HP)
   //   equal  → both destroyed
   //   lower  → destroy attacker (+ rebound damage)
+  // Field-locked monsters cannot leave the field.
+  const defLocked = isFieldLocked(defMonster)
+  const atkLocked = isFieldLocked(atkMonster)
+
   if (atkPower > defPower) {
-    dField[tIdx] = null
-    defender = {
-      ...defender,
-      field: dField,
-      graveyard: [...defender.graveyard, defMonster],
+    let destroyedNote: string | null = null
+    if (defLocked) {
+      dField[tIdx] = defMonster
+      defender = { ...defender, field: dField }
+    } else {
+      dField[tIdx] = null
+      defender = {
+        ...defender,
+        field: dField,
+        graveyard: [...defender.graveyard, defMonster],
+      }
+      const destroyed = afterMonsterDestroyed(defender, defMonster)
+      defender = destroyed.player
+      destroyedNote = destroyed.note
+      if (atkDef.effectId === 'beta_destroyer') betaMayChain = true
     }
-    const destroyed = afterMonsterDestroyed(defender, defMonster)
-    defender = destroyed.player
     aField[aIdx] = { ...atkMonster, hasAttacked: true }
     attacker = { ...attacker, field: aField }
 
@@ -4574,27 +7295,42 @@ function resolveBattle(
     for (const n of stealNotes) next = log(next, n)
     next = log(
       next,
-      `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — ทำลาย ${defCard.nameTh}`,
+      defLocked
+        ? `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — ${defCard.nameTh} ถูกล็อก รอดจากการถูกทำลาย`
+        : `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — ทำลาย ${defCard.nameTh}`,
     )
-    if (destroyed.note) next = log(next, destroyed.note)
-    if (atkDef.effectId === 'beta_destroyer') betaMayChain = true
+    if (destroyedNote) next = log(next, destroyedNote)
   } else if (atkPower === defPower) {
-    aField[aIdx] = null
-    dField[tIdx] = null
-    attacker = {
-      ...attacker,
-      field: aField,
-      graveyard: [...attacker.graveyard, atkMonster],
+    let atkDestroyedNote: string | null = null
+    let defDestroyedNote: string | null = null
+    if (!atkLocked) {
+      aField[aIdx] = null
+      attacker = {
+        ...attacker,
+        field: aField,
+        graveyard: [...attacker.graveyard, atkMonster],
+      }
+      const atkDestroyed = afterMonsterDestroyed(attacker, atkMonster)
+      attacker = atkDestroyed.player
+      atkDestroyedNote = atkDestroyed.note
+    } else {
+      aField[aIdx] = { ...atkMonster, hasAttacked: true }
+      attacker = { ...attacker, field: aField }
     }
-    defender = {
-      ...defender,
-      field: dField,
-      graveyard: [...defender.graveyard, defMonster],
+    if (!defLocked) {
+      dField[tIdx] = null
+      defender = {
+        ...defender,
+        field: dField,
+        graveyard: [...defender.graveyard, defMonster],
+      }
+      const defDestroyed = afterMonsterDestroyed(defender, defMonster)
+      defender = defDestroyed.player
+      defDestroyedNote = defDestroyed.note
+    } else {
+      dField[tIdx] = defMonster
+      defender = { ...defender, field: dField }
     }
-    const atkDestroyed = afterMonsterDestroyed(attacker, atkMonster)
-    attacker = atkDestroyed.player
-    const defDestroyed = afterMonsterDestroyed(defender, defMonster)
-    defender = defDestroyed.player
 
     next = {
       ...state,
@@ -4608,23 +7344,35 @@ function resolveBattle(
     }
     if (attackDrawNote) next = log(next, attackDrawNote)
     for (const n of stealNotes) next = log(next, n)
+    const lockNote =
+      atkLocked || defLocked
+        ? ` (ล็อก: ${[atkLocked ? atkDef.nameTh : null, defLocked ? defCard.nameTh : null].filter(Boolean).join(' · ')} รอด)`
+        : ''
     next = log(
       next,
-      `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — พลังเท่ากัน ทำลายทั้งคู่!`,
+      `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — พลังเท่ากัน${lockNote || ' ทำลายทั้งคู่!'}`,
     )
-    if (atkDestroyed.note) next = log(next, atkDestroyed.note)
-    if (defDestroyed.note) next = log(next, defDestroyed.note)
+    if (atkDestroyedNote) next = log(next, atkDestroyedNote)
+    if (defDestroyedNote) next = log(next, defDestroyedNote)
   } else {
     const rebound = defPower - atkPower
-    aField[aIdx] = null
-    attacker = {
-      ...attacker,
-      field: aField,
-      graveyard: [...attacker.graveyard, atkMonster],
+    let destroyedNote: string | null = null
+    if (atkLocked) {
+      aField[aIdx] = { ...atkMonster, hasAttacked: true }
+      attacker = { ...attacker, field: aField }
+      if (rebound > 0) attacker = applyDamage(attacker, rebound, true)
+    } else {
+      aField[aIdx] = null
+      attacker = {
+        ...attacker,
+        field: aField,
+        graveyard: [...attacker.graveyard, atkMonster],
+      }
+      const destroyed = afterMonsterDestroyed(attacker, atkMonster)
+      attacker = destroyed.player
+      destroyedNote = destroyed.note
+      if (rebound > 0) attacker = applyDamage(attacker, rebound, true)
     }
-    const destroyed = afterMonsterDestroyed(attacker, atkMonster)
-    attacker = destroyed.player
-    if (rebound > 0) attacker = applyDamage(attacker, rebound, true)
 
     next = {
       ...state,
@@ -4640,9 +7388,11 @@ function resolveBattle(
     for (const n of stealNotes) next = log(next, n)
     next = log(
       next,
-      `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — ตีแพ้ ทำลาย ${atkDef.nameTh}${rebound > 0 ? ` ดาเมจสะท้อน ${rebound} (พลังงาน +${rebound})` : ''}`,
+      atkLocked
+        ? `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — ตีแพ้แต่ถูกล็อก รอด${rebound > 0 ? ` ดาเมจสะท้อน ${rebound}` : ''}`
+        : `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — ตีแพ้ ทำลาย ${atkDef.nameTh}${rebound > 0 ? ` ดาเมจสะท้อน ${rebound} (พลังงาน +${rebound})` : ''}`,
     )
-    if (destroyed.note) next = log(next, destroyed.note)
+    if (destroyedNote) next = log(next, destroyedNote)
   }
 
   next = checkWinner(next)
