@@ -414,16 +414,34 @@
 
 .pack-glow {
   position: absolute;
-  inset: -18%;
-  border-radius: 40%;
-  background: radial-gradient(circle, rgba(212, 181, 106, 0.45), transparent 68%);
+  inset: 6%;
+  border-radius: 8px;
+  background: radial-gradient(
+    ellipse at 50% 42%,
+    rgba(255, 220, 140, 0.22),
+    transparent 62%
+  );
   animation: pack-pulse 2.4s ease-in-out infinite;
   pointer-events: none;
+  z-index: 0;
+  /* Keep aura inside the pack silhouette */
+  -webkit-mask-image: var(--pack-mask);
+  mask-image: var(--pack-mask);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
 }
 
 .pack-stage.charging .pack-glow {
   animation: pack-charge 0.55s ease-in-out infinite;
-  background: radial-gradient(circle, rgba(255, 230, 140, 0.7), transparent 65%);
+  background: radial-gradient(
+    ellipse at 50% 42%,
+    rgba(255, 230, 140, 0.4),
+    transparent 60%
+  );
 }
 
 .pack-stage.charging .pack-body {
@@ -440,6 +458,7 @@
   box-shadow:
     0 22px 48px rgba(0, 0, 0, 0.6),
     0 0 0 1px rgba(255, 240, 200, 0.08);
+  z-index: 1;
 }
 
 .pack-body.frameless {
@@ -447,12 +466,13 @@
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .pack-body.frameless .pack-art {
   object-fit: contain;
-  filter: drop-shadow(0 22px 40px rgba(0, 0, 0, 0.65));
+  /* Soft contact shadow only — no bright outer sparkle */
+  filter: drop-shadow(0 18px 28px rgba(0, 0, 0, 0.55));
 }
 
 .pack-art {
@@ -470,14 +490,23 @@
   inset: 0;
   background: linear-gradient(
     115deg,
-    transparent 30%,
-    rgba(255, 255, 255, 0.14) 48%,
-    transparent 62%
+    transparent 28%,
+    rgba(255, 255, 255, 0.16) 48%,
+    transparent 64%
   );
   background-size: 220% 100%;
   animation: foil-drift 3.2s linear infinite;
   mix-blend-mode: screen;
   pointer-events: none;
+  /* Shine only on opaque pack pixels */
+  -webkit-mask-image: var(--pack-mask);
+  mask-image: var(--pack-mask);
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
 }
 
 .pack-hint {
@@ -491,24 +520,20 @@
 @keyframes pack-pulse {
   0%,
   100% {
-    opacity: 0.55;
-    transform: scale(0.96);
+    opacity: 0.4;
   }
   50% {
-    opacity: 1;
-    transform: scale(1.04);
+    opacity: 0.85;
   }
 }
 
 @keyframes pack-charge {
   0%,
   100% {
-    opacity: 0.7;
-    transform: scale(1);
+    opacity: 0.55;
   }
   50% {
     opacity: 1;
-    transform: scale(1.12);
   }
 }
 

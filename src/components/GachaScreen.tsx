@@ -436,6 +436,7 @@ export function GachaScreen() {
                   disabled={!canBuy && phase !== 'buying'}
                   onClick={() => void onOpen()}
                   aria-label={`เปิดซอง ราคา ${box?.packCost ?? 20} เหรียญ`}
+                  style={{ '--pack-mask': `url(${coverArt})` } as CSSProperties}
                 >
                   <span className="pack-glow" aria-hidden />
                   <span className="pack-body frameless">
@@ -460,7 +461,11 @@ export function GachaScreen() {
 
             {phase === 'tearing' && (
               <div className="pack-stage tearing">
-                <div className="pack-seal tearing-pack" aria-hidden>
+                <div
+                  className="pack-seal tearing-pack"
+                  aria-hidden
+                  style={{ '--pack-mask': `url(${coverArt})` } as CSSProperties}
+                >
                   <span className="pack-glow" />
                   <span className="pack-body frameless">
                     <img
