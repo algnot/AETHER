@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState, type CSSProperties } from 're
 import { ChevronLeft, ChevronRight, History, PackageOpen, RotateCcw } from 'lucide-react'
 import {
   apiGachaBox,
+  apiGachaBoxConfigPatch,
   apiGachaHistory,
   apiGachaOpen,
   apiGachaOpenAll,
@@ -62,7 +63,6 @@ export function GachaScreen() {
   const boxMeta = getGachaBox(boxId)
   const coverArt = boxMeta?.coverArt ?? '/gacha/box-s00-pack-v2.png'
   const backgroundArt = boxMeta?.backgroundArt ?? coverArt
-  const gachaOn = boxMeta ? canOpenGacha(boxMeta, { isDev }) : true
 
   const [box, setBox] = useState<GachaBoxView | null>(null)
   const [progress, setProgress] = useState<BoxProgressView | null>(null)
@@ -71,6 +71,21 @@ export function GachaScreen() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [openAllModal, setOpenAllModal] = useState(false)
+  const [cfgBusy, setCfgBusy] = useState(false)
+  const [cfgDraft, setCfgDraft] = useState<{
+    publicEnabled: boolean
+    urPerBox: number
+    srPerBox: number
+    rateUr: number
+    rateSr: number
+    rateR: number
+  } | null>(null)
+
+  const gachaOn = box
+    ? box.gachaEnabled !== false
+    : boxMeta
+      ? canOpenGacha(boxMeta, { isDev })
+      : true
 
   const [phase, setPhase] = useState<PullPhase>('idle')
   const [pullCards, setPullCards] = useState<GachaPullCard[] | null>(null)
@@ -171,6 +186,7 @@ export function GachaScreen() {
         pool,
         progress: remainingInBox(meta, defaultBoxProgress()),
         gachaEnabled: canOpenGacha(meta, { isDev }),
+        publicEnabled: meta.gachaEnabled !== false,
       }
     }
 
@@ -182,6 +198,14 @@ export function GachaScreen() {
       setBox(b)
       setProgress(b.progress)
       setHistory(h)
+      setCfgDraft({
+        publicEnabled: b.publicEnabled ?? b.gachaEnabled !== false,
+        urPerBox: b.urPerBox,
+        srPerBox: b.srPerBox,
+        rateUr: Math.round(b.rareRates.UR * 100),
+        rateSr: Math.round(b.rareRates.SR * 100),
+        rateR: Math.round(b.rareRates.R * 100),
+      })
       setError(null)
     } catch (err) {
       const fallback = localFallback()
@@ -189,6 +213,14 @@ export function GachaScreen() {
         setBox(fallback)
         setProgress(fallback.progress)
         setHistory([])
+        setCfgDraft({
+          publicEnabled: fallback.publicEnabled ?? false,
+          urPerBox: fallback.urPerBox,
+          srPerBox: fallback.srPerBox,
+          rateUr: Math.round(fallback.rareRates.UR * 100),
+          rateSr: Math.round(fallback.rareRates.SR * 100),
+          rateR: Math.round(fallback.rareRates.R * 100),
+        })
         setError(
           err instanceof Error
             ? `${err.message} · แสดงพูลการ์ดจากเครื่อง`
@@ -204,6 +236,38 @@ export function GachaScreen() {
     void load()
   }, [load])
 
+  const saveBoxConfig = async () => {
+    if (!token || !isDev || !cfgDraft) return
+    setCfgBusy(true)
+    setError(null)
+    try {
+      const res = await apiGachaBoxConfigPatch(token, boxId, {
+        gachaEnabled: cfgDraft.publicEnabled,
+        urPerBox: cfgDraft.urPerBox,
+        srPerBox: cfgDraft.srPerBox,
+        rareRates: {
+          UR: cfgDraft.rateUr / 100,
+          SR: cfgDraft.rateSr / 100,
+          R: cfgDraft.rateR / 100,
+        },
+      })
+      setBox(res.box)
+      setProgress(res.box.progress)
+      setCfgDraft({
+        publicEnabled: res.config.gachaEnabled,
+        urPerBox: res.config.urPerBox,
+        srPerBox: res.config.srPerBox,
+        rateUr: Math.round(res.config.rareRates.UR * 100),
+        rateSr: Math.round(res.config.rareRates.SR * 100),
+        rateR: Math.round(res.config.rareRates.R * 100),
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'บันทึกค่ากล่องไม่สำเร็จ')
+    } finally {
+      setCfgBusy(false)
+    }
+  }
+
   const resetPullStage = () => {
     setPhase('idle')
     setPullCards(null)
@@ -218,7 +282,12 @@ export function GachaScreen() {
 
   useEffect(() => {
     // Catalog-only boxes open on the card browser (dev can still pull)
-    if (boxMeta && !canOpenGacha(boxMeta, { isDev })) {
+    const enabled = box
+      ? box.gachaEnabled !== false
+      : boxMeta
+        ? canOpenGacha(boxMeta, { isDev })
+        : true
+    if (!enabled) {
       setTab('odds')
       setPhase('idle')
       setPullCards(null)
@@ -228,7 +297,7 @@ export function GachaScreen() {
       setBurst(null)
       clearHoverPreview()
     }
-  }, [boxId, boxMeta, isDev])
+  }, [boxId, box?.gachaEnabled, boxMeta, isDev])
 
   const cycleBox = (dir: 'prev' | 'next') => {
     if (phase !== 'idle' || slideDir || busy) return
@@ -1130,6 +1199,138 @@ export function GachaScreen() {
               เท่ากับ UR+SR ที่ยังไม่ได้ จะออกแค่ UR/SR จนครบ
             </p>
           </section>
+          )}
+
+          {isDev && cfgDraft && (
+            <section className="odds-dev-config">
+              <h3>Dev · ปรับกล่องจาก DB</h3>
+              <p className="odds-dev-hint">
+                บันทึกลง Mongo <code>GachaBoxConfig</code> — ไม่ต้อง redeploy
+              </p>
+              <label className="odds-dev-toggle">
+                <input
+                  type="checkbox"
+                  checked={cfgDraft.publicEnabled}
+                  disabled={cfgBusy}
+                  onChange={(e) =>
+                    setCfgDraft((d) =>
+                      d ? { ...d, publicEnabled: e.target.checked } : d,
+                    )
+                  }
+                />
+                เปิดซองสาธารณะ (enable box)
+              </label>
+              <div className="odds-dev-grid">
+                <label>
+                  UR / กล่อง
+                  <input
+                    type="number"
+                    min={0}
+                    max={20}
+                    value={cfgDraft.urPerBox}
+                    disabled={cfgBusy}
+                    onChange={(e) =>
+                      setCfgDraft((d) =>
+                        d
+                          ? {
+                              ...d,
+                              urPerBox: Math.max(0, Number(e.target.value) || 0),
+                            }
+                          : d,
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  SR / กล่อง
+                  <input
+                    type="number"
+                    min={0}
+                    max={20}
+                    value={cfgDraft.srPerBox}
+                    disabled={cfgBusy}
+                    onChange={(e) =>
+                      setCfgDraft((d) =>
+                        d
+                          ? {
+                              ...d,
+                              srPerBox: Math.max(0, Number(e.target.value) || 0),
+                            }
+                          : d,
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  UR %
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={cfgDraft.rateUr}
+                    disabled={cfgBusy}
+                    onChange={(e) =>
+                      setCfgDraft((d) =>
+                        d
+                          ? {
+                              ...d,
+                              rateUr: Math.max(0, Number(e.target.value) || 0),
+                            }
+                          : d,
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  SR %
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={cfgDraft.rateSr}
+                    disabled={cfgBusy}
+                    onChange={(e) =>
+                      setCfgDraft((d) =>
+                        d
+                          ? {
+                              ...d,
+                              rateSr: Math.max(0, Number(e.target.value) || 0),
+                            }
+                          : d,
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  R %
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={cfgDraft.rateR}
+                    disabled={cfgBusy}
+                    onChange={(e) =>
+                      setCfgDraft((d) =>
+                        d
+                          ? {
+                              ...d,
+                              rateR: Math.max(0, Number(e.target.value) || 0),
+                            }
+                          : d,
+                      )
+                    }
+                  />
+                </label>
+              </div>
+              <button
+                type="button"
+                className="gacha-open-btn"
+                disabled={cfgBusy}
+                onClick={() => void saveBoxConfig()}
+              >
+                {cfgBusy ? 'กำลังบันทึก…' : 'บันทึกเรท / enable'}
+              </button>
+            </section>
           )}
 
           <section className="odds-pool">

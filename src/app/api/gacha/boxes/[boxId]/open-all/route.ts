@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { jsonError, userIdFromRequest } from '@/lib/auth'
 import { connectDb } from '@/lib/db'
-import { getGachaBox, remainingInBox, canOpenGacha } from '@/data/gachaBoxes'
+import { remainingInBox, canOpenGacha } from '@/data/gachaBoxes'
 import { openPack, reboxProgress, type PulledCard } from '@/lib/gacha'
+import { resolveGachaBox } from '@/lib/resolveGachaBox'
 import {
   addToInventory,
   getBoxProgress,
@@ -18,10 +19,10 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     if (!userId) return jsonError('ต้องเข้าสู่ระบบก่อน', 401)
 
     const { boxId } = await ctx.params
-    const box = getGachaBox(boxId)
+    await connectDb()
+    const box = await resolveGachaBox(boxId)
     if (!box) return jsonError('ไม่พบกล่องนี้', 404)
 
-    await connectDb()
     const user = await User.findById(userId)
     if (!user) return jsonError('ไม่พบผู้ใช้', 401)
     if (!canOpenGacha(box, user)) {

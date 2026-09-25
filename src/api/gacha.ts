@@ -28,8 +28,19 @@ export type GachaBoxView = {
   rareRates: { R: number; SR: number; UR: number }
   pool: { C: number; R: number; SR: number; UR: number; total: number }
   progress: BoxProgressView
-  /** false = browse catalog only (no pack opening) */
+  /** Whether this account may open packs (public OR is_dev) */
   gachaEnabled?: boolean
+  /** Raw public switch after static + DB merge */
+  publicEnabled?: boolean
+}
+
+export type GachaBoxConfigView = {
+  boxId: string
+  gachaEnabled: boolean
+  urPerBox: number
+  srPerBox: number
+  packCost: number
+  rareRates: { R: number; SR: number; UR: number }
 }
 
 export type GachaPullCard = { cardId: string; rarity: Rarity }
@@ -109,4 +120,23 @@ export async function apiGachaHistory(token: string, boxId: string, limit = 30) 
     { headers: authHeaders(token) },
   )
   return parseJson<{ history: GachaHistoryEntry[] }>(res)
+}
+
+export async function apiGachaBoxConfigPatch(
+  token: string,
+  boxId: string,
+  patch: {
+    gachaEnabled?: boolean
+    urPerBox?: number
+    srPerBox?: number
+    packCost?: number
+    rareRates?: Partial<{ R: number; SR: number; UR: number }>
+  },
+) {
+  const res = await fetch(`/api/gacha/boxes/${boxId}/config`, {
+    method: 'PATCH',
+    headers: authHeaders(token),
+    body: JSON.stringify(patch),
+  })
+  return parseJson<{ box: GachaBoxView; config: GachaBoxConfigView }>(res)
 }

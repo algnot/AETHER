@@ -1479,6 +1479,57 @@
   background: rgba(0, 0, 0, 0.28);
 }
 
+.odds-dev-config {
+  padding: 14px;
+  border: 1px dashed rgba(212, 181, 106, 0.45);
+  background: rgba(40, 28, 8, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.odds-dev-hint {
+  margin: 0;
+  font-size: 0.82rem;
+  opacity: 0.75;
+}
+
+.odds-dev-hint code {
+  font-size: 0.78rem;
+}
+
+.odds-dev-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.odds-dev-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+}
+
+.odds-dev-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.78rem;
+  opacity: 0.9;
+}
+
+.odds-dev-grid input[type='number'] {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgba(155, 176, 160, 0.28);
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  border-radius: 6px;
+  font-size: 0.95rem;
+}
+
 .anatomy-row {
   display: flex;
   align-items: center;

@@ -57,10 +57,12 @@ export const GACHA_BOXES: Record<GachaBoxId, GachaBoxDef> = {
     packsPerBox: 20,
     cardsPerPack: 5,
     commonsPerPack: 4,
-    urPerBox: 0,
-    srPerBox: 6,
+    // Expected over 20 packs ≈ 14 R / 4 SR / 2 UR (Zeeka + future URs)
+    urPerBox: 2,
+    srPerBox: 4,
     packCost: 20,
-    rareRates: { R: 0.65, SR: 0.35, UR: 0 },
+    rareRates: { R: 0.7, SR: 0.2, UR: 0.1 },
+    /** Preview until enabled via Mongo GachaBoxConfig */
     gachaEnabled: false,
   },
   /** @deprecated Prefer S01 — kept so old progress keys still resolve */
@@ -74,10 +76,10 @@ export const GACHA_BOXES: Record<GachaBoxId, GachaBoxDef> = {
     packsPerBox: 20,
     cardsPerPack: 5,
     commonsPerPack: 4,
-    urPerBox: 0,
-    srPerBox: 6,
+    urPerBox: 2,
+    srPerBox: 4,
     packCost: 20,
-    rareRates: { R: 0.65, SR: 0.35, UR: 0 },
+    rareRates: { R: 0.7, SR: 0.2, UR: 0.1 },
     gachaEnabled: false,
   },
 }
