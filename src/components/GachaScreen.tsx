@@ -81,13 +81,19 @@ export function GachaScreen() {
   const [previewPos, setPreviewPos] = useState<{ top: number; left: number } | null>(
     null,
   )
+  const [previewSheet, setPreviewSheet] = useState(false)
   const skipRef = useRef(false)
   const revealLock = useRef(false)
 
   const clearHoverPreview = () => {
     setHoverPreview(null)
     setPreviewPos(null)
+    setPreviewSheet(false)
   }
+
+  const isCoarsePointer = () =>
+    typeof window !== 'undefined' &&
+    window.matchMedia('(hover: none), (pointer: coarse)').matches
 
   const showPoolPreview = (
     card: GachaPullCard,
@@ -95,9 +101,23 @@ export function GachaScreen() {
     tileRarity: Rarity,
   ) => {
     const rect = el.getBoundingClientRect()
-    const preferLeft = tileRarity === 'SR' || tileRarity === 'C'
+    const previewW = Math.min(220, window.innerWidth - 24)
     const gap = 12
-    const previewW = 220
+    const useSheet =
+      window.innerWidth < 900 ||
+      isCoarsePointer() ||
+      rect.bottom > window.innerHeight * 0.72
+
+    if (useSheet) {
+      setPreviewSheet(true)
+      setPreviewSide('right')
+      setPreviewPos({ top: 0, left: 0 })
+      setHoverPreview(card)
+      return
+    }
+
+    setPreviewSheet(false)
+    const preferLeft = tileRarity === 'SR' || tileRarity === 'C'
     let side: 'left' | 'right' = preferLeft ? 'left' : 'right'
     if (side === 'right' && rect.right + gap + previewW > window.innerWidth - 8) {
       side = 'left'
@@ -107,10 +127,25 @@ export function GachaScreen() {
     }
     setPreviewSide(side)
     setPreviewPos({
-      top: rect.top + rect.height / 2,
+      top: Math.min(
+        Math.max(rect.top + rect.height / 2, 120),
+        window.innerHeight - 120,
+      ),
       left: side === 'right' ? rect.right + gap : rect.left - gap,
     })
     setHoverPreview(card)
+  }
+
+  const togglePoolPreview = (
+    card: GachaPullCard,
+    el: HTMLElement,
+    tileRarity: Rarity,
+  ) => {
+    if (hoverPreview?.cardId === card.cardId) {
+      clearHoverPreview()
+      return
+    }
+    showPoolPreview(card, el, tileRarity)
   }
 
   const load = useCallback(async () => {
@@ -367,6 +402,7 @@ export function GachaScreen() {
             disabled={inCeremony && id !== 'pull'}
             onClick={() => {
               if (inCeremony && id !== 'pull') return
+              clearHoverPreview()
               setTab(id)
             }}
           >
@@ -851,14 +887,18 @@ export function GachaScreen() {
                           className={`pool-card-btn${
                             hoverPreview?.cardId === c.id ? ' is-preview' : ''
                           }`}
-                          onMouseEnter={(e) =>
+                          onMouseEnter={(e) => {
+                            if (isCoarsePointer()) return
                             showPoolPreview(
                               { cardId: c.id, rarity: c.rarity },
                               e.currentTarget,
                               r,
                             )
-                          }
-                          onMouseLeave={clearHoverPreview}
+                          }}
+                          onMouseLeave={() => {
+                            if (isCoarsePointer()) return
+                            clearHoverPreview()
+                          }}
                           onFocus={(e) =>
                             showPoolPreview(
                               { cardId: c.id, rarity: c.rarity },
@@ -866,7 +906,19 @@ export function GachaScreen() {
                               r,
                             )
                           }
-                          onBlur={clearHoverPreview}
+                          onBlur={() => {
+                            if (isCoarsePointer()) return
+                            clearHoverPreview()
+                          }}
+                          onClick={(e) => {
+                            if (!isCoarsePointer()) return
+                            e.preventDefault()
+                            togglePoolPreview(
+                              { cardId: c.id, rarity: c.rarity },
+                              e.currentTarget,
+                              r,
+                            )
+                          }}
                           aria-label={c.nameTh}
                         >
                           <CardView cardId={c.id} size="tiny" hideName />
@@ -883,35 +935,6 @@ export function GachaScreen() {
               })}
             </div>
           </section>
-
-          {hoverPreview && tab === 'odds' && previewPos && (
-            <div
-              className={`gacha-hover-preview pool-beside-preview side-${previewSide}`}
-              style={
-                {
-                  top: previewPos.top,
-                  left: previewPos.left,
-                } as CSSProperties
-              }
-              aria-hidden
-            >
-              <div className={`preview-frame rarity-${hoverPreview.rarity}`}>
-                <CardView cardId={hoverPreview.cardId} size="preview" />
-                <p className={`preview-rarity rarity-${hoverPreview.rarity}`}>
-                  {hoverPreview.rarity} · {RARITY_LABELS[hoverPreview.rarity]}
-                </p>
-                <p className="preview-name">
-                  {getCard(hoverPreview.cardId).nameTh}
-                </p>
-                <p className="preview-effect">
-                  {getCard(hoverPreview.cardId).type === 'monster' &&
-                  !getCard(hoverPreview.cardId).effectId
-                    ? 'ไม่มีเอฟเฟค'
-                    : getCard(hoverPreview.cardId).description}
-                </p>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -939,14 +962,18 @@ export function GachaScreen() {
                     className={`gacha-history-card${
                       hoverPreview?.cardId === c.cardId ? ' is-preview' : ''
                     }`}
-                    onMouseEnter={(e) =>
+                    onMouseEnter={(e) => {
+                      if (isCoarsePointer()) return
                       showPoolPreview(
                         { cardId: c.cardId, rarity: c.rarity },
                         e.currentTarget,
                         c.rarity,
                       )
-                    }
-                    onMouseLeave={clearHoverPreview}
+                    }}
+                    onMouseLeave={() => {
+                      if (isCoarsePointer()) return
+                      clearHoverPreview()
+                    }}
                     onFocus={(e) =>
                       showPoolPreview(
                         { cardId: c.cardId, rarity: c.rarity },
@@ -954,7 +981,19 @@ export function GachaScreen() {
                         c.rarity,
                       )
                     }
-                    onBlur={clearHoverPreview}
+                    onBlur={() => {
+                      if (isCoarsePointer()) return
+                      clearHoverPreview()
+                    }}
+                    onClick={(e) => {
+                      if (!isCoarsePointer()) return
+                      e.preventDefault()
+                      togglePoolPreview(
+                        { cardId: c.cardId, rarity: c.rarity },
+                        e.currentTarget,
+                        c.rarity,
+                      )
+                    }}
                     aria-label={getCard(c.cardId).nameTh}
                   >
                     <CardView cardId={c.cardId} size="tiny" hideName />
@@ -963,37 +1002,45 @@ export function GachaScreen() {
               </div>
             </article>
           ))}
-
-          {hoverPreview && previewPos && (
-            <div
-              className={`gacha-hover-preview pool-beside-preview side-${previewSide}`}
-              style={
-                {
-                  top: previewPos.top,
-                  left: previewPos.left,
-                } as CSSProperties
-              }
-              aria-hidden
-            >
-              <div className={`preview-frame rarity-${hoverPreview.rarity}`}>
-                <CardView cardId={hoverPreview.cardId} size="preview" />
-                <p className={`preview-rarity rarity-${hoverPreview.rarity}`}>
-                  {hoverPreview.rarity} · {RARITY_LABELS[hoverPreview.rarity]}
-                </p>
-                <p className="preview-name">
-                  {getCard(hoverPreview.cardId).nameTh}
-                </p>
-                <p className="preview-effect">
-                  {getCard(hoverPreview.cardId).type === 'monster' &&
-                  !getCard(hoverPreview.cardId).effectId
-                    ? 'ไม่มีเอฟเฟค'
-                    : getCard(hoverPreview.cardId).description}
-                </p>
-              </div>
-            </div>
-          )}
         </div>
       )}
+
+      {hoverPreview &&
+        previewPos &&
+        (tab === 'odds' || tab === 'history') && (
+          <div
+            className={`gacha-hover-preview pool-beside-preview side-${previewSide}${
+              previewSheet ? ' sheet' : ''
+            }`}
+            style={
+              previewSheet
+                ? undefined
+                : ({
+                    top: previewPos.top,
+                    left: previewPos.left,
+                  } as CSSProperties)
+            }
+            onClick={previewSheet ? clearHoverPreview : undefined}
+            role={previewSheet ? 'presentation' : undefined}
+            aria-hidden
+          >
+            <div className={`preview-frame rarity-${hoverPreview.rarity}`}>
+              <CardView cardId={hoverPreview.cardId} size="preview" />
+              <p className={`preview-rarity rarity-${hoverPreview.rarity}`}>
+                {hoverPreview.rarity} · {RARITY_LABELS[hoverPreview.rarity]}
+              </p>
+              <p className="preview-name">
+                {getCard(hoverPreview.cardId).nameTh}
+              </p>
+              <p className="preview-effect">
+                {getCard(hoverPreview.cardId).type === 'monster' &&
+                !getCard(hoverPreview.cardId).effectId
+                  ? 'ไม่มีเอฟเฟค'
+                  : getCard(hoverPreview.cardId).description}
+              </p>
+            </div>
+          </div>
+        )}
     </div>
   )
 }
