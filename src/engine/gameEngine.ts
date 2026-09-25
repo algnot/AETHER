@@ -21,6 +21,8 @@ const FIELD_SIZE = 4
 const MAX_SPELL_TRAP = 10
 const MAX_ENERGY_CARRY = 5
 const BASE_ENERGY_INCOME = 2
+/** First player's first turn income. */
+const FIRST_PLAYER_OPENING_ENERGY = 3
 /** Second player's first turn income (going-second compensation). */
 const SECOND_PLAYER_OPENING_ENERGY = 5
 const OPENING_HAND = 5
@@ -317,11 +319,13 @@ function capEnergyCarry(player: PlayerState): PlayerState {
 
 function startOfTurnEnergy(
   player: PlayerState,
-  options?: { secondPlayerOpening?: boolean },
+  options?: { firstPlayerOpening?: boolean; secondPlayerOpening?: boolean },
 ): PlayerState {
   const base = options?.secondPlayerOpening
     ? SECOND_PLAYER_OPENING_ENERGY
-    : BASE_ENERGY_INCOME
+    : options?.firstPlayerOpening
+      ? FIRST_PLAYER_OPENING_ENERGY
+      : BASE_ENERGY_INCOME
   const income = player.turnEnergy + base
   let next: PlayerState = {
     ...player,
@@ -438,9 +442,12 @@ function beginTurn(state: GameState): GameState {
     alkataHandSummonedCardIdsThisTurn: [],
   })
 
+  const firstPlayerOpening =
+    state.turn === 1 && id === state.firstPlayer
   const secondPlayerOpening =
     state.turn === 1 && id !== state.firstPlayer
   let player = startOfTurnEnergy(clearAlkataHandLimit(state.players[id]), {
+    firstPlayerOpening,
     secondPlayerOpening,
   })
   player = enableAttacks(player)
