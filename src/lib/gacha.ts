@@ -18,9 +18,11 @@ function poolByRarity(box: GachaBoxDef): Record<Rarity, string[]> {
   return pools
 }
 
-function pickOne(ids: string[], rng: () => number): string {
+/** Pick one id and remove it from the working pool so a pack has no duplicates. */
+function pickUnique(ids: string[], rng: () => number): string {
   if (ids.length === 0) throw new Error('empty card pool')
-  return ids[Math.floor(rng() * ids.length)]!
+  const i = Math.floor(rng() * ids.length)
+  return ids.splice(i, 1)[0]!
 }
 
 function rollRareSlot(
@@ -62,6 +64,7 @@ function rollRareSlot(
 /**
  * Open one pack from the current box progress.
  * Returns cards + updated progress (does not mutate input).
+ * Cards within a single pack are always unique by cardId.
  */
 export function openPack(
   box: GachaBoxDef,
@@ -71,32 +74,42 @@ export function openPack(
   const rem = remainingInBox(box, progress)
   if (rem.isEmpty) throw new Error('BOX_EMPTY')
 
-  const pools = poolByRarity(box)
+  const base = poolByRarity(box)
+  // Working copies — picks splice out so this pack cannot repeat an id
+  const pools: Record<Rarity, string[]> = {
+    C: [...base.C],
+    R: [...base.R],
+    SR: [...base.SR],
+    UR: [...base.UR],
+  }
+
   if (pools.C.length === 0) throw new Error('NO_COMMON_POOL')
+  if (pools.C.length < box.commonsPerPack) {
+    throw new Error('COMMON_POOL_TOO_SMALL')
+  }
 
   const cards: PulledCard[] = []
 
   for (let i = 0; i < box.commonsPerPack; i++) {
-    const cardId = pickOne(pools.C, rng)
+    const cardId = pickUnique(pools.C, rng)
     cards.push({ cardId, rarity: 'C' })
   }
 
   const rare = rollRareSlot(box, progress, rng)
-  const rarePool = pools[rare]
+  let rareRarity: Rarity = rare
+  let rarePool = pools[rare]
   if (rarePool.length === 0) {
-    // Fallback cascade
     const fallback =
-      (rare === 'UR' && pools.SR.length && 'SR') ||
-      (pools.R.length && 'R') ||
-      (pools.C.length && 'C') ||
+      (rare === 'UR' && pools.SR.length && ('SR' as const)) ||
+      (pools.R.length && ('R' as const)) ||
+      (pools.C.length && ('C' as const)) ||
       null
     if (!fallback) throw new Error('NO_RARE_POOL')
-    const cardId = pickOne(pools[fallback], rng)
-    cards.push({ cardId, rarity: fallback })
-  } else {
-    const cardId = pickOne(rarePool, rng)
-    cards.push({ cardId, rarity: rare })
+    rareRarity = fallback
+    rarePool = pools[fallback]
   }
+  const rareId = pickUnique(rarePool, rng)
+  cards.push({ cardId: rareId, rarity: rareRarity })
 
   // Put rare last for reveal flair; shuffle commons only
   const commons = cards.slice(0, box.commonsPerPack)
