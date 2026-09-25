@@ -55,7 +55,7 @@ export function CardView(props: Props) {
     selected,
     dimmed,
     hideName,
-    evolved,
+    evolved: evolvedProp,
     exhausted,
     fx,
     fxOffset,
@@ -66,6 +66,7 @@ export function CardView(props: Props) {
     onMouseEnter,
   } = props
   const id = cardId ?? instance?.cardId
+  const evolved = evolvedProp ?? instance?.evolved ?? false
   const size = resolveSize(props)
 
   if (faceDown || !id) {

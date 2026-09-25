@@ -104,6 +104,7 @@ import {
 import type { GameScreen, PlayerId } from '../types/game'
 import { mockHand } from '../tutorial/scenario'
 import { useDeckStore } from './deckStore'
+import { useAuthStore } from './authStore'
 
 export type BattleFx = {
   attackerId: string
@@ -443,7 +444,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       alert(valid.message)
       return
     }
-    const game = createGame(deck.cards, BOT_DECK_LIST)
+    const evolved = useAuthStore.getState().user?.evolved ?? {}
+    const game = createGame(deck.cards, BOT_DECK_LIST, 'คุณ', 'CPU', {
+      playerEvolved: evolved,
+    })
     set({
       screen: 'duel',
       game,

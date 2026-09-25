@@ -1,5 +1,5 @@
 import { v4 as uuid } from 'uuid'
-import { deckListToArray, getCard, TUTORIAL_BOT_DECK_LIST, TUTORIAL_DECK_LIST } from '../data/cards'
+import { getCard, TUTORIAL_BOT_DECK_LIST, TUTORIAL_DECK_LIST } from '../data/cards'
 import {
   mockHand,
   TUTORIAL_BOT_HP,
@@ -35,13 +35,18 @@ function shuffle<T>(arr: T[]): T[] {
   return a
 }
 
-function makeInstance(cardId: string, turn = 0): CardInstance {
+function makeInstance(
+  cardId: string,
+  turn = 0,
+  evolved = false,
+): CardInstance {
   return {
     instanceId: uuid(),
     cardId,
     canAttack: false,
     hasAttacked: false,
     summonTurn: turn,
+    ...(evolved ? { evolved: true } : {}),
   }
 }
 
@@ -56,6 +61,7 @@ function resetForHand(card: CardInstance): CardInstance {
     faceDown: false,
     // Keep cost override if Shorin fetched this card this turn
     tempCostOverride: card.tempCostOverride,
+    ...(card.evolved ? { evolved: true } : {}),
   }
 }
 
@@ -67,15 +73,32 @@ function resetForSummon(card: CardInstance, turn: number): CardInstance {
     canAttack: true,
     hasAttacked: false,
     summonTurn: turn,
+    ...(card.evolved ? { evolved: true } : {}),
   }
+}
+
+function buildDeckInstances(
+  deckList: Record<string, number>,
+  evolvedCounts?: Record<string, number>,
+): CardInstance[] {
+  const instances: CardInstance[] = []
+  for (const [cardId, n] of Object.entries(deckList)) {
+    const total = Math.max(0, Math.floor(n))
+    const evoN = Math.min(total, Math.max(0, Math.floor(evolvedCounts?.[cardId] ?? 0)))
+    for (let i = 0; i < total; i++) {
+      instances.push(makeInstance(cardId, 0, i < evoN))
+    }
+  }
+  return shuffle(instances)
 }
 
 function createPlayer(
   id: PlayerId,
   name: string,
   deckList: Record<string, number>,
+  evolvedCounts?: Record<string, number>,
 ): PlayerState {
-  const deck = shuffle(deckListToArray(deckList).map((id) => makeInstance(id)))
+  const deck = buildDeckInstances(deckList, evolvedCounts)
   return {
     id,
     name,
@@ -256,9 +279,15 @@ export function createGame(
   opponentDeck: Record<string, number>,
   playerName = 'คุณ',
   opponentName = 'CPU',
+  options?: { playerEvolved?: Record<string, number> },
 ): GameState {
   const firstPlayer: PlayerId = Math.random() < 0.5 ? 'player' : 'opponent'
-  let player = createPlayer('player', playerName, playerDeck)
+  let player = createPlayer(
+    'player',
+    playerName,
+    playerDeck,
+    options?.playerEvolved,
+  )
   let opponent = createPlayer('opponent', opponentName, opponentDeck)
 
   player = drawCards(player, OPENING_HAND)

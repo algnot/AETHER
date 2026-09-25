@@ -150,6 +150,8 @@ export interface CardInstance {
   asleepUntil?: PlayerId
   /** Set face-down on spell/trap zone */
   faceDown?: boolean
+  /** Cosmetic full-art frame (from inventory evolve) */
+  evolved?: boolean
 }
 
 export interface PlayerState {

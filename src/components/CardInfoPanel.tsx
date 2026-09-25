@@ -33,6 +33,22 @@ export function CardInfoPanel({ cardId, compact }: Props) {
   const card = getCard(cardId)
   const baseAtk = card.type === 'monster' ? card.atk : undefined
 
+  const previewInstance = (() => {
+    if (!game) return undefined
+    const zones: (CardInstance | null | undefined)[] = [
+      ...game.players.player.hand,
+      ...game.players.player.field,
+      ...game.players.player.spellTrap,
+      ...game.players.player.graveyard,
+      ...game.players.opponent.field,
+      ...game.players.opponent.spellTrap,
+    ]
+    const matches = zones.filter(
+      (c): c is CardInstance => !!c && c.cardId === cardId,
+    )
+    return matches.find((c) => c.evolved) ?? matches[0]
+  })()
+
   const displayCost = (() => {
     if (!game || !isKataSpellOrTrap(cardId)) return card.cost
     const findInHand = (owner: 'player' | 'opponent'): CardInstance | undefined =>
@@ -73,7 +89,12 @@ export function CardInfoPanel({ cardId, compact }: Props) {
   return (
     <aside className={`info-panel type-${card.type} ${compact ? 'compact' : ''}`}>
       <div className="info-card-preview">
-        <CardView cardId={card.id} size="preview" />
+        <CardView
+          cardId={card.id}
+          instance={previewInstance}
+          size="preview"
+          evolved={previewInstance?.evolved}
+        />
       </div>
 
       <div className="info-body">
