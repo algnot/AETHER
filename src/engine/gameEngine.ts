@@ -6391,7 +6391,7 @@ export function openActivationCounter(
         priorAttackerInstanceId: extras?.priorAttackerInstanceId,
       },
     },
-    selectedCardId: sourceCardId,
+    selectedCardId: sourceCardId ?? null,
   }
   next = log(
     next,
