@@ -79,6 +79,7 @@ export function GachaScreen() {
   const [tab, setTab] = useState<Tab>('pull')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [openAllModal, setOpenAllModal] = useState(false)
 
   const [phase, setPhase] = useState<PullPhase>('idle')
   const [pullCards, setPullCards] = useState<GachaPullCard[] | null>(null)
@@ -306,23 +307,35 @@ export function GachaScreen() {
     }
   }
 
+  const requestOpenAll = () => {
+    if (!token || busy || phase !== 'idle') return
+    const packsLeft = progress?.packsLeft ?? 0
+    if (packsLeft <= 1) return
+    const cost = packsLeft * (box?.packCost ?? 20)
+    if (coins < cost) {
+      setError(
+        `เหรียญไม่พอ (ต้องการ ${cost.toLocaleString('th-TH')} สำหรับ ${packsLeft} ซอง)`,
+      )
+      return
+    }
+    setError(null)
+    setOpenAllModal(true)
+  }
+
   const onOpenAll = async () => {
     if (!token || busy || phase !== 'idle') return
     const packsLeft = progress?.packsLeft ?? 0
     if (packsLeft <= 0) return
     const cost = packsLeft * (box?.packCost ?? 20)
     if (coins < cost) {
-      setError(`เหรียญไม่พอ (ต้องการ ${cost.toLocaleString('th-TH')} สำหรับ ${packsLeft} ซอง)`)
-      return
-    }
-    if (
-      !window.confirm(
-        `เปิดซองที่เหลือทั้งหมด ${packsLeft} ซอง (−${cost.toLocaleString('th-TH')} เหรียญ)?`,
+      setError(
+        `เหรียญไม่พอ (ต้องการ ${cost.toLocaleString('th-TH')} สำหรับ ${packsLeft} ซอง)`,
       )
-    ) {
+      setOpenAllModal(false)
       return
     }
 
+    setOpenAllModal(false)
     setBusy(true)
     setError(null)
     setPhase('buying')
@@ -588,7 +601,7 @@ export function GachaScreen() {
                         ? `เหรียญไม่พอ (ต้องการ ${openAllCost.toLocaleString('th-TH')})`
                         : `เปิดซองที่เหลือ ${packsLeft} ซอง`
                     }
-                    onClick={() => void onOpenAll()}
+                    onClick={requestOpenAll}
                   >
                     เปิดทั้งกล่อง · {packsLeft} ซอง (−
                     {openAllCost.toLocaleString('th-TH')})
@@ -1251,6 +1264,68 @@ export function GachaScreen() {
             </div>
           </div>
         )}
+      {openAllModal && (
+        <div
+          className="gacha-confirm-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="gacha-open-all-title"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setOpenAllModal(false)
+          }}
+        >
+          <div className="gacha-confirm-panel">
+            <header className="gacha-confirm-head">
+              <h3 id="gacha-open-all-title">เปิดทั้งกล่อง?</h3>
+              <button
+                type="button"
+                className="gacha-confirm-x"
+                aria-label="ปิด"
+                onClick={() => setOpenAllModal(false)}
+              >
+                ×
+              </button>
+            </header>
+            <p className="gacha-confirm-lead">
+              จะเปิดซองที่เหลือทั้งหมดใน Box {boxId} ทันที
+              แล้วแสดงสรุปผลรวม
+            </p>
+            <ul className="gacha-confirm-stats">
+              <li>
+                <span>จำนวนซอง</span>
+                <strong>{packsLeft} ซอง</strong>
+              </li>
+              <li>
+                <span>ราคา</span>
+                <strong>−{openAllCost.toLocaleString('th-TH')} เหรียญ</strong>
+              </li>
+              <li>
+                <span>คงเหลือหลังเปิด</span>
+                <strong>
+                  {(coins - openAllCost).toLocaleString('th-TH')} เหรียญ
+                </strong>
+              </li>
+            </ul>
+            <div className="gacha-confirm-actions">
+              <button
+                type="button"
+                className="gacha-rebox-btn"
+                onClick={() => setOpenAllModal(false)}
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                className="gacha-open-btn"
+                disabled={busy || !canOpenAll}
+                onClick={() => void onOpenAll()}
+              >
+                ยืนยันเปิดทั้งกล่อง
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
