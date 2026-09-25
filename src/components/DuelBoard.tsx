@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type DragEvent } from 'react'
 import { getCard } from '../data/cards'
 import {
   canActivateSoluy,
@@ -23,7 +23,7 @@ import {
 } from '../engine/gameEngine'
 import { useDraggableModals } from '../hooks/useDraggableModals'
 import { useAppStore } from '../store/gameStore'
-import { PHASE_LABELS, type Phase } from '../types/game'
+import { PHASE_LABELS, type GameState, type Phase } from '../types/game'
 import { CardInfoPanel } from './CardInfoPanel'
 import { CardView } from './CardView'
 import { AtkIcon } from './GameIcons'
@@ -67,6 +67,42 @@ function ZoneAtkBadge({ atk }: { atk: number }) {
       <b>{atk}</b>
     </span>
   )
+}
+
+/** Field monster optional activate — shown as confirm popover before firing. */
+function fieldEffectOffer(
+  game: GameState,
+  instanceId: string,
+): { summary: string } | null {
+  if (
+    game.activePlayer !== 'player' ||
+    game.interaction.type !== 'idle' ||
+    (game.phase !== 'main1' && game.phase !== 'main2')
+  ) {
+    return null
+  }
+  if (canActivateSoluy(game, 'player', instanceId)) {
+    return { summary: 'สลับมอนสเตอร์กับมือ' }
+  }
+  if (canActivateShorin(game, 'player', instanceId)) {
+    return { summary: 'ค้นหาการ์ดจากเด็ค' }
+  }
+  if (canActivateSaruka(game, 'player', instanceId)) {
+    return { summary: 'ค้นหาการ์ดจากเด็ค' }
+  }
+  if (canActivateRyuka(game, 'player', instanceId)) {
+    return { summary: 'ดึงการ์ด / ทำให้มอนสเตอร์หลับ' }
+  }
+  if (canActivateZeeka(game, 'player', instanceId)) {
+    return { summary: 'ATK + ตามจำนวน「คาถา」ในสุสาน' }
+  }
+  if (canActivateAgatha(game, 'player', instanceId)) {
+    return { summary: 'ค้นหาจากสุสาน / เด็ค' }
+  }
+  if (canActivateNoah(game, 'player', instanceId)) {
+    return { summary: 'มิล「คาถา」จากเด็คแล้วเปิดใช้' }
+  }
+  return null
 }
 
 function SideResources({
@@ -175,6 +211,7 @@ export function DuelBoard() {
   const [lungeOffset, setLungeOffset] = useState<{ x: number; y: number } | null>(null)
   const [gyView, setGyView] = useState<'player' | 'opponent' | null>(null)
   const [logOpen, setLogOpen] = useState(false)
+  const [effectConfirmId, setEffectConfirmId] = useState<string | null>(null)
   const tutorialMode = useAppStore((s) => s.tutorialMode)
   const tutorialGuide = useAppStore((s) => s.tutorialGuide)
   const forceCardId = tutorialGuide?.forceCardId ?? null
@@ -185,6 +222,22 @@ export function DuelBoard() {
   const youDirectRef = useRef<HTMLDivElement>(null)
   const [stageEl, setStageEl] = useState<HTMLDivElement | null>(null)
   useDraggableModals(stageEl)
+
+  useEffect(() => {
+    if (!game || !effectConfirmId) return
+    const stillThere = game.players.player.field.some(
+      (m) => m?.instanceId === effectConfirmId,
+    )
+    const offer = stillThere ? fieldEffectOffer(game, effectConfirmId) : null
+    if (!offer) setEffectConfirmId(null)
+  }, [
+    game,
+    effectConfirmId,
+    game?.phase,
+    game?.activePlayer,
+    game?.interaction.type,
+    game?.players.player.field,
+  ])
 
   const setZoneRef = (instanceId: string | undefined, el: HTMLElement | null) => {
     if (!instanceId) return
@@ -985,7 +1038,7 @@ export function DuelBoard() {
                   <div
                     key={`p-${i}`}
                     ref={(el) => setZoneRef(m?.instanceId, el)}
-                    className={`zone ${attacking === m?.instanceId ? 'attacking' : ''} ${dragOverZone === i ? 'drop-ready' : ''} ${(summoning || reinforceSelected || emergencySummon || (reinforcing && dragKind === 'monster')) && !m ? 'summon-target' : ''} ${battleFx?.targetId === m?.instanceId ? 'impact' : ''} ${m && isEffectSource(m.instanceId) ? 'effect-source-zone' : ''} ${isPickTarget ? 'pick-target' : ''}`}
+                    className={`zone ${attacking === m?.instanceId ? 'attacking' : ''} ${dragOverZone === i ? 'drop-ready' : ''} ${(summoning || reinforceSelected || emergencySummon || (reinforcing && dragKind === 'monster')) && !m ? 'summon-target' : ''} ${battleFx?.targetId === m?.instanceId ? 'impact' : ''} ${m && isEffectSource(m.instanceId) ? 'effect-source-zone' : ''} ${isPickTarget ? 'pick-target' : ''} ${m && canAct && fieldEffectOffer(game, m.instanceId) ? 'effect-ready' : ''}`}
                     onDragOver={(e) => {
                       if (!canAct || dragKind !== 'monster' || m) {
                         e.dataTransfer.dropEffect = 'none'
@@ -1028,6 +1081,7 @@ export function DuelBoard() {
                           soluyBounceId === m.instanceId ||
                           buddyFirstId === m.instanceId ||
                           isPickTarget ||
+                          effectConfirmId === m.instanceId ||
                           (canAct &&
                             (game.phase === 'main1' || game.phase === 'main2') &&
                             (canActivateSoluy(game, 'player', m.instanceId) ||
@@ -1078,6 +1132,14 @@ export function DuelBoard() {
                         }
                         onClick={() => {
                           hoverCard(m.cardId)
+                          const offer = fieldEffectOffer(game, m.instanceId)
+                          if (offer) {
+                            setEffectConfirmId((cur) =>
+                              cur === m.instanceId ? null : m.instanceId,
+                            )
+                            return
+                          }
+                          setEffectConfirmId(null)
                           onMonsterClick(m.instanceId, 'player')
                         }}
                         onMouseEnter={() => hoverCard(m.cardId)}
@@ -1090,6 +1152,52 @@ export function DuelBoard() {
                           m.instanceId,
                         )}
                       />
+                      {canAct && fieldEffectOffer(game, m.instanceId) && (
+                        <span
+                          className="effect-ready-dot"
+                          title="สั่งใช้เอฟเฟคได้"
+                          aria-label="สั่งใช้เอฟเฟคได้"
+                        />
+                      )}
+                      {effectConfirmId === m.instanceId &&
+                        (() => {
+                          const offer = fieldEffectOffer(game, m.instanceId)
+                          if (!offer) return null
+                          const name = getCard(m.cardId).nameTh
+                          return (
+                            <div
+                              className="effect-confirm-pop"
+                              role="dialog"
+                              aria-label={`ยืนยันสั่งใช้ ${name}`}
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <p className="effect-confirm-q">
+                                สั่งใช้การ์ดนี้ใช่ไหม?
+                              </p>
+                              <p className="effect-confirm-name">{name}</p>
+                              <p className="effect-confirm-sum">{offer.summary}</p>
+                              <div className="effect-confirm-actions">
+                                <button
+                                  type="button"
+                                  className="effect-confirm-yes"
+                                  onClick={() => {
+                                    setEffectConfirmId(null)
+                                    onMonsterClick(m.instanceId, 'player')
+                                  }}
+                                >
+                                  ใช้
+                                </button>
+                                <button
+                                  type="button"
+                                  className="effect-confirm-no"
+                                  onClick={() => setEffectConfirmId(null)}
+                                >
+                                  ไม่ใช้
+                                </button>
+                              </div>
+                            </div>
+                          )
+                        })()}
                     </>
                     ) : null}
                   </div>

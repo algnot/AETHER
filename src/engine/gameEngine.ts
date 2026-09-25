@@ -1831,9 +1831,9 @@ function countKataInGy(player: PlayerState): number {
   return player.graveyard.filter((c) => isKataSpellOrTrap(c.cardId)).length
 }
 
-/** Zeeka active ATK boost — 2 uses/turn when GY kata > 5, else 1 */
+/** Zeeka active ATK boost — 2 uses/turn when GY kata ≥ 5, else 1 */
 function zeekaAtkUsesPerTurn(player: PlayerState): number {
-  return countKataInGy(player) > 5 ? 2 : 1
+  return countKataInGy(player) >= 5 ? 2 : 1
 }
 
 function countDynogrOnField(player: PlayerState): number {
@@ -2281,6 +2281,14 @@ export function getAtkBreakdown(
     parts.push({
       label: mod > 0 ? 'บัฟถาวร' : 'ดีบัฟถาวร',
       value: mod,
+    })
+  }
+
+  const zeekaBonus = mon.zeekaAtkBonus ?? 0
+  if (zeekaBonus !== 0) {
+    parts.push({
+      label: 'ซีก้า (ถาวร)',
+      value: zeekaBonus,
     })
   }
 
@@ -4802,10 +4810,13 @@ export function activateZeekaAtk(
   if (idx < 0) return state
   const mon = player.field[idx]!
   const kataN = countKataInGy(player)
+  const prevBonus = mon.zeekaAtkBonus ?? 0
+  const nextBonus = prevBonus + kataN
   const field = [...player.field]
   field[idx] = {
     ...mon,
-    atkMod: (mon.atkMod ?? 0) + kataN,
+    // Dedicated stack so other atkMod writes cannot wipe Zeeka's permanent gains
+    zeekaAtkBonus: nextBonus,
     effectUses: (mon.effectUses ?? 0) + 1,
   }
   player = { ...player, field }
@@ -4821,7 +4832,7 @@ export function activateZeekaAtk(
     zeekaAtkUsesPerTurn(player) - (field[idx]!.effectUses ?? 0)
   next = log(
     next,
-    `จอมเวทย์ ซีก้า — ATK +${kataN} จาก「คาถา」ในสุสาน → ${atk}${
+    `จอมเวทย์ ซีก้า — ATK +${kataN} จาก「คาถา」ในสุสาน (สะสม ${prevBonus} → ${nextBonus}) → ${atk}${
       usesLeft > 0 ? ` (ใช้ได้อีก ${usesLeft} ครั้งเทิร์นนี้)` : ''
     }`,
   )
