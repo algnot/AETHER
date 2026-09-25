@@ -196,7 +196,10 @@ export function DeckBuilder() {
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [evoBusy, setEvoBusy] = useState(false)
 
-  const salvagePlan = useMemo(() => buildSalvagePlan(inventory), [inventory])
+  const salvagePlan = useMemo(
+    () => buildSalvagePlan(inventory, evolvedMap),
+    [inventory, evolvedMap],
+  )
   const canSalvage = salvagePlan.totalCards > 0
 
   const isCoarsePointer = () =>
@@ -562,7 +565,9 @@ export function DeckBuilder() {
   const openSalvageModal = () => {
     setSalvageError(null)
     if (!canSalvage) {
-      setHint(`ไม่มีการ์ดส่วนเกิน — เก็บได้สูงสุด ${SALVAGE_KEEP_COPIES} ใบต่อชนิด`)
+      setHint(
+        `ไม่มีการ์ดส่วนเกิน — เก็บได้สูงสุด ${SALVAGE_KEEP_COPIES} ปกติ + ${SALVAGE_KEEP_COPIES} Evo ต่อชนิด`,
+      )
       return
     }
     setSalvageOpen(true)
@@ -644,7 +649,7 @@ export function DeckBuilder() {
                 title={
                   canSalvage
                     ? `ย่อยส่วนเกิน ${salvagePlan.totalCards} ใบ → ${salvagePlan.totalGems} เพชร`
-                    : `เก็บได้สูงสุด ${SALVAGE_KEEP_COPIES} ใบต่อชนิด`
+                    : `เก็บได้สูงสุด ${SALVAGE_KEEP_COPIES} ปกติ + ${SALVAGE_KEEP_COPIES} Evo ต่อชนิด`
                 }
               >
                 <Gem size={15} strokeWidth={2.25} aria-hidden />
@@ -740,7 +745,7 @@ export function DeckBuilder() {
                 title={
                   canSalvage
                     ? `ย่อยส่วนเกิน ${salvagePlan.totalCards} ใบ → ${salvagePlan.totalGems} เพชร`
-                    : `เก็บได้สูงสุด ${SALVAGE_KEEP_COPIES} ใบต่อชนิด`
+                    : `เก็บได้สูงสุด ${SALVAGE_KEEP_COPIES} ปกติ + ${SALVAGE_KEEP_COPIES} Evo ต่อชนิด`
                 }
               >
                 <Gem size={15} strokeWidth={2.25} aria-hidden />
@@ -1202,8 +1207,8 @@ export function DeckBuilder() {
               </button>
             </header>
             <p className="builder-salvage-lead">
-              ระบบเลือกใบที่ 4 เป็นต้นไปให้อัตโนมัติ (เก็บ{' '}
-              {SALVAGE_KEEP_COPIES} ใบ/ชนิด) แลกเป็นเพชรตามแรริตี้
+              แยกพูลปกติ / Evo — เก็บสูงสุด {SALVAGE_KEEP_COPIES} ใบต่อพูล
+              (รวมได้ถึง {SALVAGE_KEEP_COPIES * 2} ใบ/ชนิด) ใบที่เกินแลกเป็นเพชรตามแรริตี้
             </p>
             <ul className="builder-salvage-rates">
               {RARITY_ORDER.map((r) => (
@@ -1235,10 +1240,21 @@ export function DeckBuilder() {
             </ul>
             <div className="builder-salvage-list">
               {salvagePlan.lines.map((line) => (
-                <div key={line.cardId} className="builder-salvage-row">
-                  <CardView cardId={line.cardId} size="tiny" hideName />
+                <div
+                  key={`${line.cardId}:${line.evolved ? 'e' : 'n'}`}
+                  className={`builder-salvage-row ${line.evolved ? 'is-evo' : ''}`}
+                >
+                  <CardView
+                    cardId={line.cardId}
+                    size="tiny"
+                    hideName
+                    evolved={line.evolved}
+                  />
                   <div className="builder-salvage-row-meta">
-                    <strong>{line.nameTh}</strong>
+                    <strong>
+                      {line.nameTh}
+                      {line.evolved ? ' · Evo' : ' · ปกติ'}
+                    </strong>
                     <span>
                       มี {line.owned} → เหลือ {line.keep} · ย่อย {line.qty} ×{' '}
                       {line.gemsEach}

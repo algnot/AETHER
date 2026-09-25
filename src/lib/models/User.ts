@@ -283,6 +283,33 @@ export function addEvolved(
   }
 }
 
+/** Decrement evolved copies (does not touch inventory). */
+export function removeEvolved(
+  user: {
+    evolved?: Map<string, number> | Record<string, number>
+    markModified?: (path: string) => void
+  },
+  cardId: string,
+  amount = 1,
+): boolean {
+  const n = Math.max(0, Math.floor(amount))
+  if (n <= 0) return true
+  if (!user.evolved) return false
+  const cur = getEvolvedCount(user, cardId)
+  if (cur < n) return false
+  const next = cur - n
+  if (user.evolved instanceof Map) {
+    if (next <= 0) user.evolved.delete(cardId)
+    else user.evolved.set(cardId, next)
+  } else {
+    const evo = user.evolved as Record<string, number>
+    if (next <= 0) delete evo[cardId]
+    else evo[cardId] = next
+    user.markModified?.('evolved')
+  }
+  return true
+}
+
 /** Keep evolved ≤ inventory after salvage / removals. */
 export function clampEvolvedToInventory(
   user: {

@@ -261,6 +261,15 @@
   background: rgba(0, 0, 0, 0.22);
 }
 
+.builder-salvage-row.is-evo {
+  border-color: rgba(212, 181, 106, 0.35);
+  background: linear-gradient(
+    90deg,
+    rgba(212, 181, 106, 0.12),
+    rgba(0, 0, 0, 0.22)
+  );
+}
+
 .builder-salvage-row-meta {
   min-width: 0;
   display: flex;

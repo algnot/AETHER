@@ -24,6 +24,7 @@ type SalvageResponse = {
     cardId: string
     nameTh: string
     rarity: string
+    evolved?: boolean
     qty: number
     gems: number
   }[]
