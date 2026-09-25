@@ -68,6 +68,17 @@
   }
 }
 
+/* Bob the zone/hand wrap so transform doesn't fight exhausted/FX on the shell */
+@keyframes effect-source-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-8px);
+  }
+}
+
 .card-shell.dimmed {
   opacity: 0.45;
   filter: grayscale(0.35);

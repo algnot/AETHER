@@ -620,6 +620,10 @@ function endTurn(state: GameState): GameState {
       if (m.oppEotAtkMod && endingId === otherPlayer(p.id)) {
         next = { ...next, oppEotAtkMod: undefined }
       }
+      // Zeeka ATK stacks: clear when the opponent of this controller ends
+      if (m.zeekaAtkBonus && endingId === otherPlayer(p.id)) {
+        next = { ...next, zeekaAtkBonus: undefined }
+      }
       // Ryuka sleep: clear when the designated player ends their turn
       if (m.asleepUntil === endingId) {
         next = { ...next, asleepUntil: undefined }
@@ -2287,7 +2291,7 @@ export function getAtkBreakdown(
   const zeekaBonus = mon.zeekaAtkBonus ?? 0
   if (zeekaBonus !== 0) {
     parts.push({
-      label: 'ซีก้า (ถาวร)',
+      label: 'ซีก้า (จนจบเทิร์นฝ่ายตรงข้าม)',
       value: zeekaBonus,
     })
   }
@@ -4815,7 +4819,7 @@ export function activateZeekaAtk(
   const field = [...player.field]
   field[idx] = {
     ...mon,
-    // Dedicated stack so other atkMod writes cannot wipe Zeeka's permanent gains
+    // Stacks until opponent EOT (cleared in clearTemp)
     zeekaAtkBonus: nextBonus,
     effectUses: (mon.effectUses ?? 0) + 1,
   }
@@ -4832,7 +4836,7 @@ export function activateZeekaAtk(
     zeekaAtkUsesPerTurn(player) - (field[idx]!.effectUses ?? 0)
   next = log(
     next,
-    `จอมเวทย์ ซีก้า — ATK +${kataN} จาก「คาถา」ในสุสาน (สะสม ${prevBonus} → ${nextBonus}) → ${atk}${
+    `จอมเวทย์ ซีก้า — ATK +${kataN} จาก「คาถา」ในสุสาน (สะสม ${prevBonus} → ${nextBonus} จนจบเทิร์นฝ่ายตรงข้าม) → ${atk}${
       usesLeft > 0 ? ` (ใช้ได้อีก ${usesLeft} ครั้งเทิร์นนี้)` : ''
     }`,
   )

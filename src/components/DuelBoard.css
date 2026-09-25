@@ -282,6 +282,11 @@
   z-index: 6;
 }
 
+.hand-wrap.effect-source-wrap {
+  animation: effect-source-bob 1.15s ease-in-out infinite;
+  z-index: 6;
+}
+
 .gy-panel.pick-section {
   outline: 2px solid rgba(245, 215, 110, 0.55);
   outline-offset: 2px;
@@ -322,8 +327,11 @@
   box-shadow: 0 0 12px rgba(245, 215, 110, 0.3);
 }
 
-.zone.effect-source-zone {
+.zone.effect-source-zone,
+.st-slot.effect-source-zone {
   box-shadow: 0 0 14px rgba(100, 190, 255, 0.45);
+  animation: effect-source-bob 1.15s ease-in-out infinite;
+  z-index: 5;
 }
 
 .zone.drop-ready {

@@ -123,8 +123,8 @@ export interface CardInstance {
   /** Permanent ATK modifier from effects (e.g. Death Blast) */
   atkMod?: number
   /**
-   * Zeeka OPT ATK boost stacks — permanent while on field, accumulates each use
-   * (ATK + kata-in-GY per activation; not cleared at end of turn).
+   * Zeeka OPT ATK boost stacks — lasts until the opponent of this card's
+   * controller ends their turn (same timing as Saruka oppEotAtkMod).
    */
   zeekaAtkBonus?: number
   /** Temporary ATK modifier cleared at end of turn */

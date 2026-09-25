@@ -94,7 +94,7 @@ function fieldEffectOffer(
     return { summary: 'ดึงการ์ด / ทำให้มอนสเตอร์หลับ' }
   }
   if (canActivateZeeka(game, 'player', instanceId)) {
-    return { summary: 'ATK + ตามจำนวน「คาถา」ในสุสาน' }
+    return { summary: 'ATK + ตามจำนวน「คาถา」จนจบเทิร์นฝ่ายตรงข้าม' }
   }
   if (canActivateAgatha(game, 'player', instanceId)) {
     return { summary: 'ค้นหาจากสุสาน / เด็ค' }
