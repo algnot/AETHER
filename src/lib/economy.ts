@@ -1,3 +1,5 @@
+import type { Rarity } from '@/types/game'
+
 /** Calendar day key in Asia/Bangkok (YYYY-MM-DD) */
 export function bangkokDateKey(date: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -53,4 +55,25 @@ export function canClaimDaily(
 ): boolean {
   if (!lastClaimAt) return true
   return bangkokDateKey(lastClaimAt) !== bangkokDateKey(now)
+}
+
+/**
+ * Copies kept after salvage (matches deck MAX_COPIES).
+ * Anything beyond this can be dismantled into gems.
+ */
+export const SALVAGE_KEEP_COPIES = 3
+
+/**
+ * Gems per dismantled copy, tuned to packCost 20:
+ * C cheap flood · R ≈ ¼ pack · SR ≈ 1¼ packs · UR ≈ 4 packs.
+ */
+export const SALVAGE_GEMS_BY_RARITY: Record<Rarity, number> = {
+  C: 1,
+  R: 5,
+  SR: 25,
+  UR: 80,
+}
+
+export function salvageGemsForRarity(rarity: Rarity): number {
+  return SALVAGE_GEMS_BY_RARITY[rarity]
 }

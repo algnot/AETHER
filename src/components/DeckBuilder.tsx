@@ -1,7 +1,9 @@
 import { useMemo, useRef, useState, type ChangeEvent, type DragEvent, type ReactNode } from 'react'
 import {
+  ChevronDown,
   ChevronLeft,
   Download,
+  Gem,
   Home,
   LayoutGrid,
   Pencil,
@@ -9,6 +11,7 @@ import {
   Search,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react'
 import {
   CARD_DATABASE,
@@ -19,11 +22,16 @@ import {
   getCard,
 } from '../data/cards'
 import { deckFileName, parseDeckJson, serializeDeck } from '../data/deckJson'
+import {
+  SALVAGE_GEMS_BY_RARITY,
+  SALVAGE_KEEP_COPIES,
+} from '../lib/economy'
+import { buildSalvagePlan } from '../lib/salvage'
 import { useAuthStore } from '../store/authStore'
 import { useDeckStore } from '../store/deckStore'
 import { useAppStore } from '../store/gameStore'
 import type { CardType, DeckList, Tribe } from '../types/game'
-import { CARD_TYPE_LABELS, RARITY_LABELS, TRIBE_LABELS } from '../types/game'
+import { CARD_TYPE_LABELS, RARITY_LABELS, RARITY_ORDER, TRIBE_LABELS } from '../types/game'
 import { AtkIcon, CardTypeIcon, EnergyIcon, TribeIcon } from './GameIcons'
 import { CardView } from './CardView'
 import { DeckRenameModal } from './DeckRenameModal'
@@ -140,6 +148,9 @@ export function DeckBuilder() {
   const isDeckValid = useDeckStore((s) => s.isDeckValid)
   const setScreen = useAppStore((s) => s.setScreen)
   const inventory = useAuthStore((s) => s.user?.inventory ?? {})
+  const gems = useAuthStore((s) => s.user?.gems ?? 0)
+  const salvageExcess = useAuthStore((s) => s.salvageExcess)
+  const salvaging = useAuthStore((s) => s.salvaging)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const [view, setView] = useState<'shelf' | 'edit'>('shelf')
@@ -174,6 +185,12 @@ export function DeckBuilder() {
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null)
   const [hint, setHint] = useState<string | null>(null)
   const [tabletPanel, setTabletPanel] = useState<'deck' | 'catalog'>('catalog')
+  const [salvageOpen, setSalvageOpen] = useState(false)
+  const [salvageError, setSalvageError] = useState<string | null>(null)
+  const [filtersOpen, setFiltersOpen] = useState(false)
+
+  const salvagePlan = useMemo(() => buildSalvagePlan(inventory), [inventory])
+  const canSalvage = salvagePlan.totalCards > 0
 
   const isCoarsePointer = () =>
     typeof window !== 'undefined' &&
@@ -181,6 +198,15 @@ export function DeckBuilder() {
 
   const showTribe = filter === 'all' || filter === 'monster'
   const showAtk = filter === 'all' || filter === 'monster'
+
+  const activeFilterCount = useMemo(() => {
+    let n = 0
+    if (filter !== 'all') n += 1
+    if (showTribe && tribe !== 'all') n += 1
+    if (costFilter !== 'all') n += 1
+    if (showAtk && atkFilter !== 'all') n += 1
+    return n
+  }, [filter, tribe, costFilter, atkFilter, showTribe, showAtk])
 
   const costOptions = useMemo(() => {
     const pool =
@@ -399,6 +425,28 @@ export function DeckBuilder() {
     setHint(`ลบ «${name}» แล้ว`)
   }
 
+  const openSalvageModal = () => {
+    setSalvageError(null)
+    if (!canSalvage) {
+      setHint(`ไม่มีการ์ดส่วนเกิน — เก็บได้สูงสุด ${SALVAGE_KEEP_COPIES} ใบต่อชนิด`)
+      return
+    }
+    setSalvageOpen(true)
+  }
+
+  const runSalvage = async () => {
+    setSalvageError(null)
+    try {
+      const res = await salvageExcess()
+      setSalvageOpen(false)
+      setHint(
+        `ย่อย ${res.totalCards} ใบ · ได้ ${res.totalGems.toLocaleString('th-TH')} เพชร`,
+      )
+    } catch (err) {
+      setSalvageError(err instanceof Error ? err.message : 'ย่อยการ์ดไม่สำเร็จ')
+    }
+  }
+
   const renameModalDeck =
     renameTargetId != null
       ? decks.find((d) => d.id === renameTargetId) ?? deck
@@ -450,6 +498,29 @@ export function DeckBuilder() {
               <h1>กล่องเด็ค</h1>
             </div>
             <div className="header-tools">
+              <span className="builder-gems" title="เพชร">
+                <Gem size={15} strokeWidth={2.25} aria-hidden />
+                {gems.toLocaleString('th-TH')}
+              </span>
+              <button
+                type="button"
+                className="builder-salvage-btn"
+                disabled={!canSalvage || salvaging}
+                onClick={openSalvageModal}
+                title={
+                  canSalvage
+                    ? `ย่อยส่วนเกิน ${salvagePlan.totalCards} ใบ → ${salvagePlan.totalGems} เพชร`
+                    : `เก็บได้สูงสุด ${SALVAGE_KEEP_COPIES} ใบต่อชนิด`
+                }
+              >
+                <Gem size={15} strokeWidth={2.25} aria-hidden />
+                ย่อยการ์ด
+                {canSalvage && (
+                  <span className="builder-salvage-count">
+                    {salvagePlan.totalCards}
+                  </span>
+                )}
+              </button>
               <IconBtn
                 title="เด็คใหม่"
                 onClick={() => {
@@ -523,6 +594,29 @@ export function DeckBuilder() {
               <h1>{deck.name}</h1>
             </div>
             <div className="header-tools">
+              <span className="builder-gems" title="เพชร">
+                <Gem size={15} strokeWidth={2.25} aria-hidden />
+                {gems.toLocaleString('th-TH')}
+              </span>
+              <button
+                type="button"
+                className="builder-salvage-btn"
+                disabled={!canSalvage || salvaging}
+                onClick={openSalvageModal}
+                title={
+                  canSalvage
+                    ? `ย่อยส่วนเกิน ${salvagePlan.totalCards} ใบ → ${salvagePlan.totalGems} เพชร`
+                    : `เก็บได้สูงสุด ${SALVAGE_KEEP_COPIES} ใบต่อชนิด`
+                }
+              >
+                <Gem size={15} strokeWidth={2.25} aria-hidden />
+                ย่อยการ์ด
+                {canSalvage && (
+                  <span className="builder-salvage-count">
+                    {salvagePlan.totalCards}
+                  </span>
+                )}
+              </button>
               <IconBtn
                 title="เปลี่ยนชื่อ"
                 onClick={() => {
@@ -680,7 +774,9 @@ export function DeckBuilder() {
               onDragLeave={leaveDropZone}
               onDrop={onDropToCatalog}
             >
-              <div className="panel-head catalog-head">
+              <div
+                className={`panel-head catalog-head ${filtersOpen ? 'filters-open' : 'filters-collapsed'}`}
+              >
                 <div className="search-row">
                   <span className="search-ico" aria-hidden>
                     <Search size={16} strokeWidth={2} />
@@ -694,104 +790,133 @@ export function DeckBuilder() {
                     aria-label="ค้นหาการ์ด"
                   />
                 </div>
-                <div className="filters">
-                  <button
-                    type="button"
-                    className={`filter-ico ${filter === 'all' ? 'on' : ''}`}
-                    title="ทั้งหมด"
-                    aria-label="ทั้งหมด"
-                    onClick={() => setTypeFilter('all')}
-                  >
-                    <LayoutGrid {...ICO} />
-                  </button>
-                  {(['monster', 'spell', 'trap'] as CardType[]).map((t) => (
+                <button
+                  type="button"
+                  className="filters-toggle"
+                  aria-expanded={filtersOpen}
+                  aria-controls="catalog-filter-panel"
+                  onClick={() => setFiltersOpen((o) => !o)}
+                >
+                  <ChevronDown
+                    className="filters-toggle-chevron"
+                    size={16}
+                    strokeWidth={2.25}
+                    aria-hidden
+                  />
+                  <span>ตัวกรอง</span>
+                  {activeFilterCount > 0 && (
+                    <span className="filters-toggle-badge" title="ตัวกรองที่ใช้อยู่">
+                      {activeFilterCount}
+                    </span>
+                  )}
+                  <span className="filters-toggle-hint">
+                    {filtersOpen ? 'หุบ' : 'ขยาย'}
+                  </span>
+                </button>
+                <div
+                  id="catalog-filter-panel"
+                  className="catalog-filter-panel"
+                  hidden={!filtersOpen}
+                >
+                  <div className="filters">
                     <button
-                      key={t}
                       type="button"
-                      className={`filter-ico ${filter === t ? 'on' : ''}`}
-                      title={CARD_TYPE_LABELS[t]}
-                      aria-label={CARD_TYPE_LABELS[t]}
-                      onClick={() => setTypeFilter(t)}
-                    >
-                      <CardTypeIcon type={t} />
-                    </button>
-                  ))}
-                </div>
-
-                {showTribe && (
-                  <div className="filters" role="group" aria-label="เผ่า">
-                    <button
-                      type="button"
-                      className={`filter-ico ${tribe === 'all' ? 'on' : ''}`}
-                      title="ทุกเผ่า"
-                      aria-label="ทุกเผ่า"
-                      onClick={() => setTribe('all')}
+                      className={`filter-ico ${filter === 'all' ? 'on' : ''}`}
+                      title="ทั้งหมด"
+                      aria-label="ทั้งหมด"
+                      onClick={() => setTypeFilter('all')}
                     >
                       <LayoutGrid {...ICO} />
                     </button>
-                    {(Object.keys(TRIBE_LABELS) as Tribe[]).map((t) => (
+                    {(['monster', 'spell', 'trap'] as CardType[]).map((t) => (
                       <button
                         key={t}
                         type="button"
-                        className={`filter-ico ${tribe === t ? 'on' : ''}`}
-                        title={TRIBE_LABELS[t]}
-                        aria-label={TRIBE_LABELS[t]}
-                        onClick={() => setTribe(t)}
+                        className={`filter-ico ${filter === t ? 'on' : ''}`}
+                        title={CARD_TYPE_LABELS[t]}
+                        aria-label={CARD_TYPE_LABELS[t]}
+                        onClick={() => setTypeFilter(t)}
                       >
-                        <TribeIcon tribe={t} />
+                        <CardTypeIcon type={t} />
                       </button>
                     ))}
                   </div>
-                )}
 
-                <div className="filters filters-stats" role="group" aria-label="ค่าร่าย">
-                  <button
-                    type="button"
-                    className={`filter-ico ${costFilter === 'all' ? 'on' : ''}`}
-                    title="ทุกร่าย"
-                    aria-label="ทุกร่าย"
-                    onClick={() => setCostFilter('all')}
-                  >
-                    <EnergyIcon />
-                  </button>
-                  {costOptions.map((n) => (
-                    <button
-                      key={`cost-${n}`}
-                      type="button"
-                      className={`filter-ico filter-num ${costFilter === n ? 'on' : ''}`}
-                      title={`ค่าร่าย ${n}`}
-                      aria-label={`ค่าร่าย ${n}`}
-                      onClick={() => setCostFilter(n)}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
-                {showAtk && (
-                  <div className="filters filters-stats" role="group" aria-label="พลังโจมตี">
-                    <button
-                      type="button"
-                      className={`filter-ico ${atkFilter === 'all' ? 'on' : ''}`}
-                      title="ทุก ATK"
-                      aria-label="ทุก ATK"
-                      onClick={() => setAtkFilter('all')}
-                    >
-                      <AtkIcon />
-                    </button>
-                    {atkOptions.map((n) => (
+                  {showTribe && (
+                    <div className="filters" role="group" aria-label="เผ่า">
                       <button
-                        key={`atk-${n}`}
                         type="button"
-                        className={`filter-ico filter-num ${atkFilter === n ? 'on' : ''}`}
-                        title={`ATK ${n}`}
-                        aria-label={`ATK ${n}`}
-                        onClick={() => setAtkFilter(n)}
+                        className={`filter-ico ${tribe === 'all' ? 'on' : ''}`}
+                        title="ทุกเผ่า"
+                        aria-label="ทุกเผ่า"
+                        onClick={() => setTribe('all')}
+                      >
+                        <LayoutGrid {...ICO} />
+                      </button>
+                      {(Object.keys(TRIBE_LABELS) as Tribe[]).map((t) => (
+                        <button
+                          key={t}
+                          type="button"
+                          className={`filter-ico ${tribe === t ? 'on' : ''}`}
+                          title={TRIBE_LABELS[t]}
+                          aria-label={TRIBE_LABELS[t]}
+                          onClick={() => setTribe(t)}
+                        >
+                          <TribeIcon tribe={t} />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="filters filters-stats" role="group" aria-label="ค่าร่าย">
+                    <button
+                      type="button"
+                      className={`filter-ico ${costFilter === 'all' ? 'on' : ''}`}
+                      title="ทุกร่าย"
+                      aria-label="ทุกร่าย"
+                      onClick={() => setCostFilter('all')}
+                    >
+                      <EnergyIcon />
+                    </button>
+                    {costOptions.map((n) => (
+                      <button
+                        key={`cost-${n}`}
+                        type="button"
+                        className={`filter-ico filter-num ${costFilter === n ? 'on' : ''}`}
+                        title={`ค่าร่าย ${n}`}
+                        aria-label={`ค่าร่าย ${n}`}
+                        onClick={() => setCostFilter(n)}
                       >
                         {n}
                       </button>
                     ))}
                   </div>
-                )}
+                  {showAtk && (
+                    <div className="filters filters-stats" role="group" aria-label="พลังโจมตี">
+                      <button
+                        type="button"
+                        className={`filter-ico ${atkFilter === 'all' ? 'on' : ''}`}
+                        title="ทุก ATK"
+                        aria-label="ทุก ATK"
+                        onClick={() => setAtkFilter('all')}
+                      >
+                        <AtkIcon />
+                      </button>
+                      {atkOptions.map((n) => (
+                        <button
+                          key={`atk-${n}`}
+                          type="button"
+                          className={`filter-ico filter-num ${atkFilter === n ? 'on' : ''}`}
+                          title={`ATK ${n}`}
+                          aria-label={`ATK ${n}`}
+                          onClick={() => setAtkFilter(n)}
+                        >
+                          {n}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="card-grid">
                 {catalog.length === 0 && (
@@ -859,6 +984,108 @@ export function DeckBuilder() {
             </section>
           </div>
         </>
+      )}
+
+      {salvageOpen && (
+        <div
+          className="builder-salvage-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="salvage-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !salvaging) setSalvageOpen(false)
+          }}
+        >
+          <div className="builder-salvage-panel">
+            <header className="builder-salvage-head">
+              <h3 id="salvage-title">ย่อยการ์ดส่วนเกิน</h3>
+              <button
+                type="button"
+                className="builder-salvage-x"
+                disabled={salvaging}
+                aria-label="ปิด"
+                onClick={() => setSalvageOpen(false)}
+              >
+                <X size={18} strokeWidth={2.25} />
+              </button>
+            </header>
+            <p className="builder-salvage-lead">
+              ระบบเลือกใบที่ 4 เป็นต้นไปให้อัตโนมัติ (เก็บ{' '}
+              {SALVAGE_KEEP_COPIES} ใบ/ชนิด) แลกเป็นเพชรตามแรริตี้
+            </p>
+            <ul className="builder-salvage-rates">
+              {RARITY_ORDER.map((r) => (
+                <li key={r}>
+                  <span className={`rarity-tag rarity-${r}`}>{r}</span>
+                  <strong>{SALVAGE_GEMS_BY_RARITY[r]} เพชร/ใบ</strong>
+                </li>
+              ))}
+            </ul>
+            <ul className="builder-salvage-stats">
+              {RARITY_ORDER.filter((r) => salvagePlan.byRarity[r].cards > 0).map(
+                (r) => (
+                  <li key={`sum-${r}`}>
+                    <span>
+                      {r} · {salvagePlan.byRarity[r].cards} ใบ
+                    </span>
+                    <strong>
+                      +{salvagePlan.byRarity[r].gems.toLocaleString('th-TH')}
+                    </strong>
+                  </li>
+                ),
+              )}
+              <li className="total">
+                <span>รวม {salvagePlan.totalCards} ใบ</span>
+                <strong>
+                  +{salvagePlan.totalGems.toLocaleString('th-TH')} เพชร
+                </strong>
+              </li>
+            </ul>
+            <div className="builder-salvage-list">
+              {salvagePlan.lines.map((line) => (
+                <div key={line.cardId} className="builder-salvage-row">
+                  <CardView cardId={line.cardId} size="tiny" hideName />
+                  <div className="builder-salvage-row-meta">
+                    <strong>{line.nameTh}</strong>
+                    <span>
+                      มี {line.owned} → เหลือ {line.keep} · ย่อย {line.qty} ×{' '}
+                      {line.gemsEach}
+                    </span>
+                  </div>
+                  <span className={`rarity-tag rarity-${line.rarity}`}>
+                    {line.rarity}
+                  </span>
+                  <em>+{line.gems}</em>
+                </div>
+              ))}
+            </div>
+            {salvageError && (
+              <p className="builder-salvage-error" role="alert">
+                {salvageError}
+              </p>
+            )}
+            <div className="builder-salvage-actions">
+              <button
+                type="button"
+                className="builder-salvage-confirm"
+                disabled={salvaging || !canSalvage}
+                onClick={() => void runSalvage()}
+              >
+                {salvaging
+                  ? 'กำลังย่อย…'
+                  : `ยืนยัน · ได้ ${salvagePlan.totalGems.toLocaleString('th-TH')} เพชร`}
+              </button>
+              <button
+                type="button"
+                className="builder-salvage-cancel"
+                disabled={salvaging}
+                onClick={() => setSalvageOpen(false)}
+              >
+                ยกเลิก
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

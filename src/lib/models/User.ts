@@ -8,6 +8,7 @@ export type PublicUser = {
   username: string
   inventory: Record<string, number>
   coins: number
+  gems: number
   dailyStreak: number
   canClaimDaily: boolean
 }
@@ -32,6 +33,7 @@ type UserAttrs = {
   passwordHash: string
   inventory: Map<string, number> | Record<string, number>
   coins: number
+  gems: number
   dailyStreak: number
   lastDailyClaimAt?: Date | null
   gachaBoxes: Map<string, BoxProgress> | Record<string, BoxProgress>
@@ -86,6 +88,7 @@ const userSchema = new Schema<UserAttrs, UserModel, UserMethods>(
       default: {},
     },
     coins: { type: Number, default: 0, min: 0 },
+    gems: { type: Number, default: 0, min: 0 },
     dailyStreak: { type: Number, default: 0, min: 0 },
     lastDailyClaimAt: { type: Date, default: null },
     gachaBoxes: {
@@ -113,6 +116,7 @@ userSchema.methods.toPublic = function toPublic(): PublicUser {
     username: this.username,
     inventory,
     coins: this.coins ?? 0,
+    gems: this.gems ?? 0,
     dailyStreak: this.dailyStreak ?? 0,
     canClaimDaily: canClaimDaily(this.lastDailyClaimAt ?? null),
   }
@@ -174,4 +178,33 @@ export function addToInventory(
     inv[cardId] = (inv[cardId] ?? 0) + amount
     user.markModified?.('inventory')
   }
+}
+
+/** Returns false if inventory does not have enough copies. */
+export function removeFromInventory(
+  user: {
+    inventory: Map<string, number> | Record<string, number>
+    markModified?: (path: string) => void
+  },
+  cardId: string,
+  amount = 1,
+): boolean {
+  const n = Math.max(0, Math.floor(amount))
+  if (n <= 0) return true
+  if (user.inventory instanceof Map) {
+    const cur = user.inventory.get(cardId) ?? 0
+    if (cur < n) return false
+    const next = cur - n
+    if (next <= 0) user.inventory.delete(cardId)
+    else user.inventory.set(cardId, next)
+    return true
+  }
+  const inv = user.inventory as Record<string, number>
+  const cur = inv[cardId] ?? 0
+  if (cur < n) return false
+  const next = cur - n
+  if (next <= 0) delete inv[cardId]
+  else inv[cardId] = next
+  user.markModified?.('inventory')
+  return true
 }

@@ -4,6 +4,7 @@ import {
   apiLogin,
   apiMe,
   apiRegister,
+  apiSalvageExcess,
   getStoredToken,
   setStoredToken,
   type AuthUser,
@@ -18,6 +19,7 @@ interface AuthStore {
   error: string | null
   dailyMessage: string | null
   claimingDaily: boolean
+  salvaging: boolean
   boot: () => Promise<void>
   login: (username: string, password: string) => Promise<void>
   register: (username: string, password: string) => Promise<void>
@@ -25,6 +27,8 @@ interface AuthStore {
   clearError: () => void
   clearDailyMessage: () => void
   claimDaily: () => Promise<void>
+  salvageExcess: () => Promise<{ totalCards: number; totalGems: number }>
+  patchUser: (user: AuthUser) => void
   ownedCount: (cardId: string) => number
 }
 
@@ -32,6 +36,8 @@ function normalizeUser(user: AuthUser): AuthUser {
   return {
     ...user,
     coins: user.coins ?? 0,
+    gems: user.gems ?? 0,
+    inventory: user.inventory ?? {},
     dailyStreak: user.dailyStreak ?? 0,
     canClaimDaily: user.canClaimDaily ?? false,
   }
@@ -44,6 +50,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   error: null,
   dailyMessage: null,
   claimingDaily: false,
+  salvaging: false,
 
   boot: async () => {
     const token = getStoredToken()
@@ -88,6 +95,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
   clearError: () => set({ error: null }),
   clearDailyMessage: () => set({ dailyMessage: null }),
 
+  patchUser: (user) => set({ user: normalizeUser(user) }),
+
   claimDaily: async () => {
     const token = get().token
     if (!token || get().claimingDaily) return
@@ -105,6 +114,25 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
         dailyMessage:
           err instanceof Error ? err.message : 'รับรางวัลรายวันไม่สำเร็จ',
       })
+    }
+  },
+
+  salvageExcess: async () => {
+    const token = get().token
+    if (!token || get().salvaging) {
+      throw new Error('ยังไม่พร้อมย่อยการ์ด')
+    }
+    set({ salvaging: true, error: null })
+    try {
+      const res = await apiSalvageExcess(token)
+      set({
+        user: normalizeUser(res.user),
+        salvaging: false,
+      })
+      return { totalCards: res.totalCards, totalGems: res.totalGems }
+    } catch (err) {
+      set({ salvaging: false })
+      throw err
     }
   },
 

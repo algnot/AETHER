@@ -5,6 +5,7 @@ export type AuthUser = {
   username: string
   inventory: Record<string, number>
   coins: number
+  gems: number
   dailyStreak: number
   canClaimDaily: boolean
 }
@@ -14,6 +15,19 @@ type MeResponse = { user: AuthUser }
 type DailyClaimResponse = {
   rewarded: number
   streak: number
+  user: AuthUser
+}
+type SalvageResponse = {
+  salvaged: {
+    cardId: string
+    nameTh: string
+    rarity: string
+    qty: number
+    gems: number
+  }[]
+  totalCards: number
+  totalGems: number
+  byRarity: Record<string, { cards: number; gems: number }>
   user: AuthUser
 }
 type ErrorBody = { error?: string }
@@ -88,4 +102,12 @@ export async function apiClaimDaily(token: string): Promise<DailyClaimResponse> 
     headers: authHeaders(token),
   })
   return parseJson<DailyClaimResponse>(res)
+}
+
+export async function apiSalvageExcess(token: string): Promise<SalvageResponse> {
+  const res = await fetch('/api/economy/salvage', {
+    method: 'POST',
+    headers: authHeaders(token),
+  })
+  return parseJson<SalvageResponse>(res)
 }

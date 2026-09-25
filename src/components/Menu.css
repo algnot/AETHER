@@ -59,6 +59,32 @@
   font-size: 0.9rem;
 }
 
+.menu-gems {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px 5px 7px;
+  border: 1px solid rgba(126, 200, 220, 0.45);
+  background: rgba(0, 0, 0, 0.4);
+  color: #9fd8e8;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+}
+
+.menu-gem-icon {
+  width: 16px;
+  height: 16px;
+  clip-path: polygon(50% 0%, 90% 30%, 90% 70%, 50% 100%, 10% 70%, 10% 30%);
+  background:
+    linear-gradient(145deg, #e8fbff, #6ec8e0 45%, #2a7a96 100%);
+  box-shadow: inset 0 0 0 1px rgba(220, 250, 255, 0.45);
+}
+
+.menu-gem-amount {
+  font-size: 0.9rem;
+}
+
 .menu-daily-btn {
   appearance: none;
   border: 1px solid var(--menu-brass);

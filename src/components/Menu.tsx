@@ -12,6 +12,7 @@ export function Menu() {
   const deckValid = useDeckStore((s) => s.isDeckValid(s.activeDeckId).valid)
   const username = useAuthStore((s) => s.user?.username)
   const coins = useAuthStore((s) => s.user?.coins ?? 0)
+  const gems = useAuthStore((s) => s.user?.gems ?? 0)
   const canClaimDaily = useAuthStore((s) => s.user?.canClaimDaily ?? false)
   const dailyStreak = useAuthStore((s) => s.user?.dailyStreak ?? 0)
   const claimDaily = useAuthStore((s) => s.claimDaily)
@@ -36,6 +37,10 @@ export function Menu() {
         <div className="menu-coins" title="เหรียญ">
           <span className="menu-coin-icon" aria-hidden />
           <span className="menu-coin-amount">{coins.toLocaleString('th-TH')}</span>
+        </div>
+        <div className="menu-gems" title="เพชร">
+          <span className="menu-gem-icon" aria-hidden />
+          <span className="menu-gem-amount">{gems.toLocaleString('th-TH')}</span>
         </div>
         {canClaimDaily ? (
           <button
