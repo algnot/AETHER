@@ -326,7 +326,8 @@ export function DeckBuilder() {
       if (ao !== bo) return bo - ao
       const idCmp = a.cardId.localeCompare(b.cardId)
       if (idCmp !== 0) return idCmp
-      return Number(b.evolved) - Number(a.evolved)
+      // Normal tile before Evo so double-clicking the first copy adds non-evo
+      return Number(a.evolved) - Number(b.evolved)
     })
     return rows
   }, [catalog, inventory, evolvedMap, deck])
@@ -338,11 +339,19 @@ export function DeckBuilder() {
       const n = deck.cards[id] ?? 0
       const evoOwned = Math.min(evolvedMap[id] ?? 0, inventory[id] ?? 0)
       const evoInDeck = evolvedInDeck(deck, id, evoOwned)
-      for (let i = 0; i < n; i++) {
+      // Render normals first, then evo — matches collection order
+      for (let i = 0; i < n - evoInDeck; i++) {
         copies.push({
           cardId: id,
-          key: `${id}#${i}`,
-          evolved: i < evoInDeck,
+          key: `${id}#n${i}`,
+          evolved: false,
+        })
+      }
+      for (let i = 0; i < evoInDeck; i++) {
+        copies.push({
+          cardId: id,
+          key: `${id}#e${i}`,
+          evolved: true,
         })
       }
     }
@@ -827,17 +836,39 @@ export function DeckBuilder() {
                       size="preview"
                       evolved={
                         previewEvolvedOwned > 0 &&
-                        (previewEvolved || previewUnevolved === 0)
+                        (previewEvolved || previewUnevolved <= 0)
                       }
                     />
                   </div>
                   <p className="code">
                     {previewCard.id}
                     {previewEvolvedOwned > 0 &&
-                    (previewEvolved || previewUnevolved === 0)
+                    (previewEvolved || previewUnevolved <= 0)
                       ? ' · Evo'
-                      : ''}
+                      : ' · ปกติ'}
                   </p>
+                  {previewEvolvedOwned > 0 && previewUnevolved > 0 && (
+                    <div className="preview-variant-tabs" role="tablist" aria-label="รูปแบบการ์ด">
+                      <button
+                        type="button"
+                        role="tab"
+                        className={!previewEvolved ? 'on' : ''}
+                        aria-selected={!previewEvolved}
+                        onClick={() => setPreviewEvolved(false)}
+                      >
+                        ปกติ · {previewUnevolved}
+                      </button>
+                      <button
+                        type="button"
+                        role="tab"
+                        className={previewEvolved ? 'on' : ''}
+                        aria-selected={previewEvolved}
+                        onClick={() => setPreviewEvolved(true)}
+                      >
+                        Evo · {previewEvolvedOwned}
+                      </button>
+                    </div>
+                  )}
                   <h2>{previewCard.nameTh}</h2>
                   <p className="en">{previewCard.name}</p>
                   <p className="meta">
@@ -947,6 +978,12 @@ export function DeckBuilder() {
                           hoverKey === null)
                       }
                     />
+                    <span
+                      className={`variant-chip ${copy.evolved ? 'evo' : 'normal'}`}
+                      aria-hidden
+                    >
+                      {copy.evolved ? 'Evo' : 'ปกติ'}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -1159,6 +1196,12 @@ export function DeckBuilder() {
                             hoverKey === null)
                         }
                       />
+                      <span
+                        className={`variant-chip ${evolved ? 'evo' : 'normal'}`}
+                        aria-hidden
+                      >
+                        {evolved ? 'Evo' : 'ปกติ'}
+                      </span>
                       {owned > 0 && (
                         <span
                           className={`qty-badge ${remaining <= 0 ? 'empty' : ''} ${evolved ? 'evo' : ''}`}
