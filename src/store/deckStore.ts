@@ -22,7 +22,12 @@ interface DeckStore {
   importDeck: (name: string, cards: Record<string, number>) => string
   renameDeck: (id: string, name: string) => void
   deleteDeck: (id: string) => void
-  setCardCount: (deckId: string, cardId: string, count: number) => void
+  setCardCount: (
+    deckId: string,
+    cardId: string,
+    count: number,
+    evolvedCount?: number,
+  ) => void
   getActiveDeck: () => DeckList
   getBotDeck: () => DeckList
   isDeckValid: (deckId?: string) => { valid: boolean; message: string }
@@ -87,20 +92,35 @@ export const useDeckStore = create<DeckStore>()(
           }
         }),
 
-      setCardCount: (deckId, cardId, count) => {
+      setCardCount: (deckId, cardId, count, evolvedCount) => {
         const clamped = Math.max(0, Math.min(MAX_COPIES, count))
         set((s) => ({
           decks: s.decks.map((d) => {
             if (d.id !== deckId) return d
             const cards = { ...d.cards }
-            if (clamped === 0) delete cards[cardId]
-            else cards[cardId] = clamped
+            const evolved = { ...(d.evolved ?? {}) }
+            if (clamped === 0) {
+              delete cards[cardId]
+              delete evolved[cardId]
+            } else {
+              cards[cardId] = clamped
+              if (evolvedCount !== undefined) {
+                const evo = Math.max(
+                  0,
+                  Math.min(clamped, Math.floor(evolvedCount)),
+                )
+                if (evo <= 0) delete evolved[cardId]
+                else evolved[cardId] = evo
+              } else if ((evolved[cardId] ?? 0) > clamped) {
+                evolved[cardId] = clamped
+              }
+            }
 
             const prevTotal = countDeckCards(d.cards)
             const nextTotal = countDeckCards(cards)
             // Allow shrinking (even when already over MAX_DECK); only block growth past the cap
             if (nextTotal > MAX_DECK && nextTotal > prevTotal) return d
-            return { ...d, cards }
+            return { ...d, cards, evolved }
           }),
         }))
       },
@@ -144,7 +164,7 @@ export const useDeckStore = create<DeckStore>()(
     }),
     {
       name: 'card-game-decks-v2',
-      version: 4,
+      version: 5,
       migrate: (persisted, fromVersion) => {
         const p = (persisted ?? {}) as Partial<DeckStore> & {
           decks?: DeckList[]
@@ -160,6 +180,13 @@ export const useDeckStore = create<DeckStore>()(
           if (!decks.some((d) => d.id === 'starter')) {
             decks = [starter, ...decks]
           }
+        }
+        // v5: track evolved copies in-deck (default 0 = normal art)
+        if (fromVersion < 5) {
+          decks = decks.map((d) => ({
+            ...d,
+            evolved: d.evolved ?? {},
+          }))
         }
         const activeDeckId =
           p.activeDeckId && decks.some((d) => d.id === p.activeDeckId)

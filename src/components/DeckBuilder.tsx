@@ -28,6 +28,7 @@ import {
   SALVAGE_KEEP_COPIES,
 } from '../lib/economy'
 import { buildSalvagePlan } from '../lib/salvage'
+import { evolvedInDeck } from '../lib/deckEvolved'
 import { useAuthStore } from '../store/authStore'
 import { useDeckStore } from '../store/deckStore'
 import { useAppStore } from '../store/gameStore'
@@ -278,7 +279,7 @@ export function DeckBuilder() {
       const evolvedOwned = Math.min(evolvedMap[c.id] ?? 0, owned)
       const normalOwned = owned - evolvedOwned
       const inDeck = deck.cards[c.id] ?? 0
-      const evoInDeck = Math.min(inDeck, evolvedOwned)
+      const evoInDeck = evolvedInDeck(deck, c.id, evolvedOwned)
       const normalInDeck = inDeck - evoInDeck
 
       if (owned <= 0) {
@@ -325,7 +326,7 @@ export function DeckBuilder() {
       return Number(b.evolved) - Number(a.evolved)
     })
     return rows
-  }, [catalog, inventory, evolvedMap, deck.cards])
+  }, [catalog, inventory, evolvedMap, deck])
 
   const deckCopies = useMemo(() => {
     const copies: { cardId: string; key: string; evolved: boolean }[] = []
@@ -333,7 +334,7 @@ export function DeckBuilder() {
     for (const id of ids) {
       const n = deck.cards[id] ?? 0
       const evoOwned = Math.min(evolvedMap[id] ?? 0, inventory[id] ?? 0)
-      const evoInDeck = Math.min(n, evoOwned)
+      const evoInDeck = evolvedInDeck(deck, id, evoOwned)
       for (let i = 0; i < n; i++) {
         copies.push({
           cardId: id,
@@ -343,7 +344,7 @@ export function DeckBuilder() {
       }
     }
     return copies
-  }, [deck.cards, evolvedMap, inventory])
+  }, [deck, evolvedMap, inventory])
 
   const previewCard = preview ? CARD_DATABASE.find((c) => c.id === preview) : null
   const previewOwned = preview ? inventory[preview] ?? 0 : 0
@@ -385,11 +386,33 @@ export function DeckBuilder() {
     setHint(null)
   }
 
-  const addOne = (cardId: string) => {
+  const addOne = (cardId: string, asEvolved = false) => {
     const owned = inventory[cardId] ?? 0
+    const evoOwned = Math.min(evolvedMap[cardId] ?? 0, owned)
+    const normalOwned = owned - evoOwned
     const cur = deck.cards[cardId] ?? 0
+    const curEvo = evolvedInDeck(deck, cardId, evoOwned)
+    const curNormal = cur - curEvo
+
     if (owned <= 0) {
       setHint('ยังไม่มีการ์ดใบนี้ในคลัง (รอระบบกาชาในภายหลัง)')
+      return
+    }
+    if (asEvolved) {
+      if (curEvo >= evoOwned) {
+        setHint(
+          evoOwned <= 0
+            ? 'ยังไม่มีใบ Evo ในคลัง'
+            : `ใส่ใบ Evo ครบแล้ว (${evoOwned} ใบ)`,
+        )
+        return
+      }
+    } else if (curNormal >= normalOwned) {
+      setHint(
+        normalOwned <= 0
+          ? 'ใบปกติหมดแล้ว — เลือกแถว Evo ถ้าต้องการใส่ใบวิวัฒนาการ'
+          : `ใส่ใบปกติครบแล้ว (${normalOwned} ใบ)`,
+      )
       return
     }
     if (cur >= owned) {
@@ -405,26 +428,46 @@ export function DeckBuilder() {
       return
     }
     setHint(null)
-    setCardCount(deck.id, cardId, cur + 1)
+    setCardCount(deck.id, cardId, cur + 1, asEvolved ? curEvo + 1 : curEvo)
   }
 
-  const removeOne = (cardId: string) => {
+  const removeOne = (cardId: string, asEvolved = false) => {
     const cur = deck.cards[cardId] ?? 0
     if (cur <= 0) return
+    const evoOwned = Math.min(evolvedMap[cardId] ?? 0, inventory[cardId] ?? 0)
+    const curEvo = evolvedInDeck(deck, cardId, evoOwned)
+    const curNormal = cur - curEvo
+
+    if (asEvolved) {
+      if (curEvo <= 0) return
+      setHint(null)
+      setCardCount(deck.id, cardId, cur - 1, curEvo - 1)
+      return
+    }
+    if (curNormal <= 0) {
+      // No normal slot — fall back to removing an evo copy
+      if (curEvo <= 0) return
+      setHint(null)
+      setCardCount(deck.id, cardId, cur - 1, curEvo - 1)
+      return
+    }
     setHint(null)
-    setCardCount(deck.id, cardId, cur - 1)
+    setCardCount(deck.id, cardId, cur - 1, curEvo)
   }
 
   const onDragStart = (
     e: DragEvent,
     cardId: string,
     from: 'catalog' | 'deck',
+    evolved = false,
   ) => {
     e.stopPropagation()
-    e.dataTransfer.setData('text/plain', `${from}:${cardId}`)
+    const evoFlag = evolved ? '1' : '0'
+    e.dataTransfer.setData('text/plain', `${from}:${cardId}:${evoFlag}`)
     try {
       e.dataTransfer.setData(DND_CARD, cardId)
       e.dataTransfer.setData(DND_FROM, from)
+      e.dataTransfer.setData('application/x-aether-evo', evoFlag)
     } catch {
       /* some browsers reject custom MIME types */
     }
@@ -434,11 +477,13 @@ export function DeckBuilder() {
   const readPayload = (e: DragEvent) => {
     const customFrom = e.dataTransfer.getData(DND_FROM)
     const customId = e.dataTransfer.getData(DND_CARD)
+    const customEvo = e.dataTransfer.getData('application/x-aether-evo')
     const plain = e.dataTransfer.getData('text/plain')
-    const [plainFrom, ...rest] = plain.split(':')
+    const [plainFrom, plainId, plainEvo] = plain.split(':')
     const from = customFrom || plainFrom
-    const cardId = customId || rest.join(':')
-    return { from, cardId }
+    const cardId = customId || plainId || ''
+    const evolved = (customEvo || plainEvo) === '1'
+    return { from, cardId, evolved }
   }
 
   const leaveDropZone = (e: DragEvent) => {
@@ -450,19 +495,19 @@ export function DeckBuilder() {
   const onDropToDeck = (e: DragEvent) => {
     e.preventDefault()
     setDragOver(null)
-    const { from, cardId } = readPayload(e)
+    const { from, cardId, evolved } = readPayload(e)
     if (!cardId) return
-    if (from === 'catalog') addOne(cardId)
-    selectPreview(cardId, false)
+    if (from === 'catalog') addOne(cardId, evolved)
+    selectPreview(cardId, evolved)
   }
 
   const onDropToCatalog = (e: DragEvent) => {
     e.preventDefault()
     setDragOver(null)
-    const { from, cardId } = readPayload(e)
+    const { from, cardId, evolved } = readPayload(e)
     if (!cardId || from !== 'deck') return
-    removeOne(cardId)
-    selectPreview(cardId, false)
+    removeOne(cardId, evolved)
+    selectPreview(cardId, evolved)
   }
 
   const hasCardPayload = (e: DragEvent) => {
@@ -869,15 +914,15 @@ export function DeckBuilder() {
                     key={copy.key}
                     className={`deck-copy ${copy.evolved ? 'is-evo' : ''}`}
                     draggable
-                    onDragStart={(e) => onDragStart(e, copy.cardId, 'deck')}
+                    onDragStart={(e) => onDragStart(e, copy.cardId, 'deck', copy.evolved)}
                     onDragEnd={() => setDragOver(null)}
                     onClick={() => {
                       selectPreview(copy.cardId, copy.evolved)
-                      if (isCoarsePointer()) removeOne(copy.cardId)
+                      if (isCoarsePointer()) removeOne(copy.cardId, copy.evolved)
                     }}
                     onDoubleClick={() => {
                       selectPreview(copy.cardId, copy.evolved)
-                      removeOne(copy.cardId)
+                      removeOne(copy.cardId, copy.evolved)
                     }}
                     onMouseEnter={() => {
                       if (isCoarsePointer()) return
@@ -1079,16 +1124,16 @@ export function DeckBuilder() {
                           e.preventDefault()
                           return
                         }
-                        onDragStart(e, row.cardId, 'catalog')
+                        onDragStart(e, row.cardId, 'catalog', evolved)
                       }}
                       onDragEnd={() => setDragOver(null)}
                       onClick={() => {
                         selectPreview(row.cardId, evolved)
-                        if (isCoarsePointer() && canAdd) addOne(row.cardId)
+                        if (isCoarsePointer() && canAdd) addOne(row.cardId, evolved)
                       }}
                       onDoubleClick={() => {
                         selectPreview(row.cardId, evolved)
-                        addOne(row.cardId)
+                        addOne(row.cardId, evolved)
                       }}
                       onMouseEnter={() => {
                         if (isCoarsePointer()) return

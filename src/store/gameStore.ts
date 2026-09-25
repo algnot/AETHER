@@ -108,6 +108,7 @@ import {
 } from '../engine/gameEngine'
 import type { GameScreen, PlayerId } from '../types/game'
 import { mockHand } from '../tutorial/scenario'
+import { deckEvolvedForDuel } from '../lib/deckEvolved'
 import { useDeckStore } from './deckStore'
 import { useAuthStore } from './authStore'
 
@@ -453,7 +454,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
     const evolved = useAuthStore.getState().user?.evolved ?? {}
     const game = createGame(deck.cards, BOT_DECK_LIST, 'คุณ', 'CPU', {
-      playerEvolved: evolved,
+      playerEvolved: deckEvolvedForDuel(deck, evolved),
     })
     set({
       screen: 'duel',

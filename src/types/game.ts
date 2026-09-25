@@ -386,4 +386,9 @@ export interface DeckList {
   name: string
   /** cardId -> count (1-3) */
   cards: Record<string, number>
+  /**
+   * How many copies of each cardId in this deck are evolved.
+   * Missing key = 0 (normal). Always capped by cards[id] and owned evo.
+   */
+  evolved?: Record<string, number>
 }
