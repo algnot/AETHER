@@ -110,6 +110,11 @@ export interface CardDefinition {
 export interface CardInstance {
   instanceId: string
   cardId: string
+  /**
+   * Who owns this card for GY / hand returns (set at deck build).
+   * Control can change (Scout, Yori steal) but leaves go to this owner.
+   */
+  originalOwnerId?: PlayerId
   /** Ready to attack this turn */
   canAttack: boolean
   hasAttacked: boolean
@@ -134,10 +139,10 @@ export interface CardInstance {
   /** Times this monster's activated effect was used this turn (e.g. Soluy ×2) */
   effectUses?: number
   /**
-   * Cannot leave the field until this player ends their turn
-   * (Guardian Incantation — cleared at that player's end turn)
+   * One battle-destruction save until this player ends their turn
+   * (Guardian Incantation — consumed on first battle destroy, else cleared at EOT)
    */
-  fieldLockUntil?: PlayerId
+  battleShieldUntil?: PlayerId
   /**
    * Continuous spell/trap: remaining controller turns on the ST zone
    * (Preparation Incantation — decremented at controller end turn)

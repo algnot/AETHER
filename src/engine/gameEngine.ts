@@ -39,6 +39,7 @@ function makeInstance(
   cardId: string,
   turn = 0,
   evolved = false,
+  originalOwnerId?: PlayerId,
 ): CardInstance {
   return {
     instanceId: uuid(),
@@ -46,6 +47,7 @@ function makeInstance(
     canAttack: false,
     hasAttacked: false,
     summonTurn: turn,
+    ...(originalOwnerId ? { originalOwnerId } : {}),
     ...(evolved ? { evolved: true } : {}),
   }
 }
@@ -61,6 +63,7 @@ function resetForHand(card: CardInstance): CardInstance {
     faceDown: false,
     // Keep cost override if Shorin fetched this card this turn
     tempCostOverride: card.tempCostOverride,
+    ...(card.originalOwnerId ? { originalOwnerId: card.originalOwnerId } : {}),
     ...(card.evolved ? { evolved: true } : {}),
   }
 }
@@ -73,6 +76,7 @@ function resetForSummon(card: CardInstance, turn: number): CardInstance {
     canAttack: true,
     hasAttacked: false,
     summonTurn: turn,
+    ...(card.originalOwnerId ? { originalOwnerId: card.originalOwnerId } : {}),
     ...(card.evolved ? { evolved: true } : {}),
   }
 }
@@ -80,16 +84,79 @@ function resetForSummon(card: CardInstance, turn: number): CardInstance {
 function buildDeckInstances(
   deckList: Record<string, number>,
   evolvedCounts?: Record<string, number>,
+  originalOwnerId?: PlayerId,
 ): CardInstance[] {
   const instances: CardInstance[] = []
   for (const [cardId, n] of Object.entries(deckList)) {
     const total = Math.max(0, Math.floor(n))
     const evoN = Math.min(total, Math.max(0, Math.floor(evolvedCounts?.[cardId] ?? 0)))
     for (let i = 0; i < total; i++) {
-      instances.push(makeInstance(cardId, 0, i < evoN))
+      instances.push(makeInstance(cardId, 0, i < evoN, originalOwnerId))
     }
   }
   return shuffle(instances)
+}
+
+/**
+ * Send a card to the original owner's graveyard (not necessarily the controller).
+ * Caller must already remove the card from field/hand/ST.
+ */
+function depositToOwnerGy(
+  players: GameState['players'],
+  card: CardInstance,
+  controllerId: PlayerId,
+): GameState['players'] {
+  const ownerId = card.originalOwnerId ?? controllerId
+  const cleaned: CardInstance = {
+    ...card,
+    originalOwnerId: ownerId,
+    faceDown: false,
+  }
+  const owner = players[ownerId]
+  return {
+    ...players,
+    [ownerId]: {
+      ...owner,
+      graveyard: [...owner.graveyard, cleaned],
+    },
+  }
+}
+
+/**
+ * Return a card to the original owner's hand.
+ * Caller must already remove it from the field (etc.).
+ */
+function depositToOwnerHand(
+  players: GameState['players'],
+  card: CardInstance,
+  controllerId: PlayerId,
+): GameState['players'] {
+  const ownerId = card.originalOwnerId ?? controllerId
+  const cleaned = resetForHand({
+    ...card,
+    originalOwnerId: ownerId,
+  })
+  const owner = players[ownerId]
+  return {
+    ...players,
+    [ownerId]: {
+      ...owner,
+      hand: [...owner.hand, cleaned],
+    },
+  }
+}
+
+/** Append many cards to each card's owner's GY (order preserved per owner). */
+function depositManyToOwnerGy(
+  players: GameState['players'],
+  cards: CardInstance[],
+  controllerId: PlayerId,
+): GameState['players'] {
+  let next = players
+  for (const c of cards) {
+    next = depositToOwnerGy(next, c, controllerId)
+  }
+  return next
 }
 
 function createPlayer(
@@ -98,7 +165,7 @@ function createPlayer(
   deckList: Record<string, number>,
   evolvedCounts?: Record<string, number>,
 ): PlayerState {
-  const deck = buildDeckInstances(deckList, evolvedCounts)
+  const deck = buildDeckInstances(deckList, evolvedCounts, id)
   return {
     id,
     name,
@@ -181,16 +248,19 @@ export function discardFromHand(
   const def = getCard(card.cardId)
   const hand = [...player.hand]
   hand.splice(idx, 1)
-  player = {
-    ...player,
-    hand,
-    graveyard: [...player.graveyard, { ...card, faceDown: false }],
-  }
+  player = { ...player, hand }
+
+  let players = depositToOwnerGy(
+    { ...state.players, [playerId]: player },
+    { ...card, faceDown: false },
+    playerId,
+  )
+  player = players[playerId]
 
   const remaining = handOverflow(player)
   let next: GameState = {
     ...state,
-    players: { ...state.players, [playerId]: player },
+    players,
     interaction:
       remaining > 0
         ? { type: 'discard', remaining, ownerId: playerId }
@@ -515,12 +585,13 @@ export function advancePhase(state: GameState): GameState {
 
 function endTurn(state: GameState): GameState {
   const id = state.activePlayer
-  let player = state.players[id]
+  let players = state.players
 
   // Destroy Signal Amplifier summons (and similar) at end of controller's turn
-  const eotDestroy = destroyEndOfTurnMonsters(player)
-  player = eotDestroy.player
+  const eotDestroy = destroyEndOfTurnMonsters(players, id)
+  players = eotDestroy.players
   let eotNote = eotDestroy.note
+  let player = players[id]
 
   // Tick continuous ST (Preparation Incantation etc.)
   const eotContinuous = tickContinuousSpellTraps(player)
@@ -541,8 +612,8 @@ function endTurn(state: GameState): GameState {
       if (m.tempAtkMod || m.tempCostOverride !== undefined) {
         next = { ...next, tempAtkMod: undefined, tempCostOverride: undefined }
       }
-      if (m.fieldLockUntil === endingId) {
-        next = { ...next, fieldLockUntil: undefined }
+      if (m.battleShieldUntil === endingId) {
+        next = { ...next, battleShieldUntil: undefined }
       }
       // Saruka (+8 until opp EOT): clear when the opponent of this controller ends
       if (m.oppEotAtkMod && endingId === otherPlayer(p.id)) {
@@ -574,12 +645,12 @@ function endTurn(state: GameState): GameState {
   })
   player = clearTemp(player, id)
   const waiting = otherPlayer(id)
-  const opponent = clearTemp(state.players[waiting], id)
+  const opponent = clearTemp(players[waiting], id)
 
   let next: GameState = {
     ...state,
     players: {
-      ...state.players,
+      ...players,
       [id]: player,
       [waiting]: opponent,
     },
@@ -602,34 +673,44 @@ function endTurn(state: GameState): GameState {
   return beginTurn(next)
 }
 
-/** Send monsters marked destroyAtEndTurn to GY */
-function destroyEndOfTurnMonsters(player: PlayerState): {
-  player: PlayerState
+/** Send monsters marked destroyAtEndTurn to original owner's GY */
+function destroyEndOfTurnMonsters(
+  players: GameState['players'],
+  controllerId: PlayerId,
+): {
+  players: GameState['players']
   note: string | null
 } {
-  const doomed = player.field.filter((m) => m?.destroyAtEndTurn)
-  if (doomed.length === 0) return { player, note: null }
+  let controller = { ...players[controllerId] }
+  const doomed = controller.field.filter((m) => m?.destroyAtEndTurn)
+  if (doomed.length === 0) return { players, note: null }
 
-  let next = { ...player }
+  let nextPlayers: GameState['players'] = {
+    ...players,
+    [controllerId]: controller,
+  }
+  const toGy: CardInstance[] = []
   const names: string[] = []
   for (const mon of doomed) {
     if (!mon) continue
-    if (isFieldLocked(mon)) continue
-    const idx = findFieldIndex(next, mon.instanceId)
+    controller = nextPlayers[controllerId]
+    const idx = findFieldIndex(controller, mon.instanceId)
     if (idx < 0) continue
-    const field = [...next.field]
+    const field = [...controller.field]
     field[idx] = null
-    next = {
-      ...next,
-      field,
-      graveyard: [...next.graveyard, { ...mon, destroyAtEndTurn: undefined }],
+    controller = { ...controller, field }
+    const destroyed = afterMonsterDestroyed(controller, mon)
+    controller = destroyed.player
+    nextPlayers = {
+      ...nextPlayers,
+      [controllerId]: controller,
     }
-    const destroyed = afterMonsterDestroyed(next, mon)
-    next = destroyed.player
+    toGy.push({ ...mon, destroyAtEndTurn: undefined })
     names.push(getCard(mon.cardId).nameTh)
   }
+  nextPlayers = depositManyToOwnerGy(nextPlayers, toGy, controllerId)
   return {
-    player: next,
+    players: nextPlayers,
     note: names.length
       ? `จบเทิร์น — ทำลาย ${names.join(' · ')}`
       : null,
@@ -677,32 +758,29 @@ function tickContinuousSpellTraps(player: PlayerState): {
 function destroyBattlePhaseMonsters(state: GameState): GameState {
   let next = state
   const names: string[] = []
-  for (const ownerId of ['player', 'opponent'] as PlayerId[]) {
-    let player = { ...next.players[ownerId] }
+  for (const controllerId of ['player', 'opponent'] as PlayerId[]) {
+    let player = { ...next.players[controllerId] }
     const doomed = player.field.filter((m) => m?.destroyAtBattlePhase)
     if (doomed.length === 0) continue
+    let players = { ...next.players, [controllerId]: player }
+    const toGy: CardInstance[] = []
     for (const mon of doomed) {
       if (!mon) continue
-      if (isFieldLocked(mon)) continue
+      player = players[controllerId]
       const idx = findFieldIndex(player, mon.instanceId)
       if (idx < 0) continue
       const field = [...player.field]
       field[idx] = null
-      player = {
-        ...player,
-        field,
-        graveyard: [
-          ...player.graveyard,
-          { ...mon, destroyAtBattlePhase: undefined },
-        ],
-      }
+      player = { ...player, field }
       const destroyed = afterMonsterDestroyed(player, mon)
       player = destroyed.player
+      players = { ...players, [controllerId]: player }
+      toGy.push({ ...mon, destroyAtBattlePhase: undefined })
       names.push(getCard(mon.cardId).nameTh)
     }
     next = {
       ...next,
-      players: { ...next.players, [ownerId]: player },
+      players: depositManyToOwnerGy(players, toGy, controllerId),
     }
   }
   if (names.length > 0) {
@@ -912,16 +990,18 @@ function maybeStartSaraSacrifice(
   const self = player.field[zone]!
   const field = [...player.field]
   field[zone] = null
-  player = {
-    ...player,
-    field,
-    graveyard: [...player.graveyard, { ...self, faceDown: false }],
-  }
+  player = { ...player, field }
+  let players = depositToOwnerGy(
+    { ...state.players, [playerId]: player },
+    { ...self, faceDown: false },
+    playerId,
+  )
+  player = players[playerId]
 
   const def = getCard(summonedCardId)
   let next: GameState = {
     ...state,
-    players: { ...state.players, [playerId]: player },
+    players,
     interaction: { type: 'idle' },
   }
   next = log(next, `${player.name} — ${def.nameTh} ทำลายตัวเอง!`)
@@ -981,6 +1061,14 @@ function afterSummonEffects(
   return maybeStartSoraDestroy(next, playerId, summonedCardId)
 }
 
+function hasDestroyableOpponentMonster(
+  state: GameState,
+  playerId: PlayerId,
+): boolean {
+  const opp = state.players[otherPlayer(playerId)]
+  return opp.field.some((m) => m !== null)
+}
+
 function maybeStartSoraDestroy(
   state: GameState,
   playerId: PlayerId,
@@ -1022,23 +1110,22 @@ export function pickSoraDestroy(
   if (mIdx < 0) return state
 
   const mon = opponent.field[mIdx]!
-  if (isFieldLocked(mon)) {
-    return log(state, `${getCard(mon.cardId).nameTh} ถูกล็อก — ทำลายไม่ได้`)
-  }
   const monDef = getCard(mon.cardId)
   const field = [...opponent.field]
   field[mIdx] = null
-  opponent = {
-    ...opponent,
-    field,
-    graveyard: [...opponent.graveyard, { ...mon, faceDown: false }],
-  }
+  opponent = { ...opponent, field }
   const destroyed = afterMonsterDestroyed(opponent, mon)
   opponent = destroyed.player
 
+  let players = depositToOwnerGy(
+    { ...state.players, [oppId]: opponent },
+    { ...mon, faceDown: false },
+    oppId,
+  )
+
   let next: GameState = {
     ...state,
-    players: { ...state.players, [oppId]: opponent },
+    players,
     interaction: { type: 'idle' },
     selectedCardId: monDef.id,
   }
@@ -1048,6 +1135,27 @@ export function pickSoraDestroy(
   )
   if (destroyed.note) next = log(next, destroyed.note)
   return flushAlkataTriggers(checkWinner(next))
+}
+
+/** Skip Sora destroy when no valid (unlocked) targets remain */
+export function skipSoraDestroy(
+  state: GameState,
+  playerId: PlayerId,
+): GameState {
+  if (state.interaction.type !== 'sora_destroy') return state
+  if (state.activePlayer !== playerId) return state
+  if (state.winner) return state
+  if (hasDestroyableOpponentMonster(state, playerId)) return state
+
+  let next: GameState = {
+    ...state,
+    interaction: { type: 'idle' },
+  }
+  next = log(
+    next,
+    `${state.players[playerId].name} — โซระข้ามการทำลาย (ไม่มีเป้าที่ทำลายได้)`,
+  )
+  return next
 }
 
 const DESTRUCTION_ROBOT_NAME = 'หุ่นยนต์แห่งการทำลาย'
@@ -1458,15 +1566,16 @@ export function discardForSara(
   const def = getCard(card.cardId)
   const hand = [...player.hand]
   hand.splice(idx, 1)
-  player = {
-    ...player,
-    hand,
-    graveyard: [...player.graveyard, { ...card, faceDown: false }],
-  }
+  player = { ...player, hand }
+  const players = depositToOwnerGy(
+    { ...state.players, [playerId]: player },
+    { ...card, faceDown: false },
+    playerId,
+  )
 
   let next: GameState = {
     ...state,
-    players: { ...state.players, [playerId]: player },
+    players,
     interaction: { type: 'idle' },
     selectedCardId: def.id,
   }
@@ -1492,15 +1601,16 @@ export function discardForAlkataCall(
   const def = getCard(card.cardId)
   const hand = [...player.hand]
   hand.splice(idx, 1)
-  player = {
-    ...player,
-    hand,
-    graveyard: [...player.graveyard, { ...card, faceDown: false }],
-  }
+  player = { ...player, hand }
+  const players = depositToOwnerGy(
+    { ...state.players, [playerId]: player },
+    { ...card, faceDown: false },
+    playerId,
+  )
 
   let next: GameState = {
     ...state,
-    players: { ...state.players, [playerId]: player },
+    players,
     interaction: { type: 'idle' },
     selectedCardId: def.id,
   }
@@ -1745,8 +1855,12 @@ function isMage(cardId: string): boolean {
   return getCard(cardId).tribe === 'mage'
 }
 
-export function isFieldLocked(mon: CardInstance | null | undefined): boolean {
-  return !!mon?.fieldLockUntil
+export function hasBattleShield(mon: CardInstance | null | undefined): boolean {
+  return !!mon?.battleShieldUntil
+}
+
+function consumeBattleShield(mon: CardInstance): CardInstance {
+  return { ...mon, battleShieldUntil: undefined }
 }
 
 const AGATHA_DRAW_PER_TURN = 1
@@ -2906,7 +3020,6 @@ export function pickSoulDrainSacrifice(
   const player = state.players[playerId]
   const sacIdx = findFieldIndex(player, monsterInstanceId)
   if (sacIdx < 0) return state
-  if (isFieldLocked(player.field[sacIdx])) return state
 
   const others = player.field.filter(
     (m) => m && m.instanceId !== monsterInstanceId,
@@ -2952,7 +3065,6 @@ export function pickSoulDrainTarget(
   if (stIdx < 0) return state
 
   const sacrifice = player.field[sacIdx]!
-  if (isFieldLocked(sacrifice)) return state
   const buffTarget = player.field[buffIdx]!
   const spellCard = player.spellTrap[stIdx]
   const spellDef = getCard(spellCard.cardId)
@@ -2980,18 +3092,25 @@ export function pickSoulDrainTarget(
     ...player,
     field,
     spellTrap,
-    graveyard: [
-      ...player.graveyard,
-      { ...sacrifice, faceDown: false },
-      { ...spellCard, faceDown: false },
-    ],
   }
   const destroyed = afterMonsterDestroyed(player, sacrifice)
   player = destroyed.player
 
+  let players = depositToOwnerGy(
+    { ...state.players, [playerId]: player },
+    { ...sacrifice, faceDown: false },
+    playerId,
+  )
+  players = depositToOwnerGy(
+    players,
+    { ...spellCard, faceDown: false },
+    playerId,
+  )
+  player = players[playerId]
+
   let next: GameState = {
     ...state,
-    players: { ...state.players, [playerId]: player },
+    players,
     interaction: { type: 'idle' },
     selectedCardId: buffDef.id,
   }
@@ -3018,9 +3137,6 @@ export function pickAlkataPlot(
   if (mIdx < 0) return state
   const target = player.field[mIdx]!
   if (!isAlkataGod(target.cardId)) return state
-  if (isFieldLocked(target)) {
-    return log(state, `${getCard(target.cardId).nameTh} ถูกล็อก — ทำลายไม่ได้`)
-  }
 
   const stIdx = findSpellTrapIndex(player, spellInstanceId)
   if (stIdx < 0) return state
@@ -3036,14 +3152,21 @@ export function pickAlkataPlot(
     ...player,
     field,
     spellTrap,
-    graveyard: [
-      ...player.graveyard,
-      { ...target, faceDown: false },
-      { ...spellCard, faceDown: false },
-    ],
   }
   const destroyed = afterMonsterDestroyed(player, target)
   player = destroyed.player
+
+  let players = depositToOwnerGy(
+    { ...state.players, [playerId]: player },
+    { ...target, faceDown: false },
+    playerId,
+  )
+  players = depositToOwnerGy(
+    players,
+    { ...spellCard, faceDown: false },
+    playerId,
+  )
+  player = players[playerId]
 
   const before = player.hand.length
   player = drawCards(player, 2)
@@ -3051,7 +3174,7 @@ export function pickAlkataPlot(
 
   let next: GameState = {
     ...state,
-    players: { ...state.players, [playerId]: player },
+    players: { ...players, [playerId]: player },
     interaction: { type: 'idle' },
     selectedCardId: targetDef.id,
   }
@@ -3715,15 +3838,11 @@ export function pickSoluyBounce(
   if (!isWarrior(mon.cardId)) return state
   // Cannot bounce Soluy Air Soldier
   if (isSoluyCard(mon.cardId)) return state
-  if (isFieldLocked(mon)) {
-    return log(state, `${getCard(mon.cardId).nameTh} ถูกล็อก — ส่งกลับขึ้นมือไม่ได้`)
-  }
 
   const def = getCard(mon.cardId)
   const field = [...player.field]
   field[idx] = null
-  const hand = [...player.hand, resetForHand(mon)]
-  player = { ...player, field, hand }
+  player = { ...player, field }
   player = noteAlkataLeft(player, mon)
 
   const oppId = otherPlayer(playerId)
@@ -3732,9 +3851,15 @@ export function pickSoluyBounce(
   player = retTrig.player
   opponent = retTrig.opponent
 
+  let players = depositToOwnerHand(
+    { ...state.players, [playerId]: player, [oppId]: opponent },
+    mon,
+    playerId,
+  )
+
   let next: GameState = {
     ...state,
-    players: { ...state.players, [playerId]: player, [oppId]: opponent },
+    players,
     interaction: {
       type: 'soluy_swap',
       sourceId: state.interaction.sourceId,
@@ -3761,12 +3886,21 @@ export function cancelSoluySwap(state: GameState): GameState {
   const playerId = state.activePlayer
   const oppId = otherPlayer(playerId)
   let player = { ...state.players[playerId] }
-  let opponent = state.players[oppId]
-  const handIdx = findHandIndex(player, bounceId)
-  if (handIdx < 0) {
+  let opponent = { ...state.players[oppId] }
+
+  // Bounced card may be in the original owner's hand
+  let fromId: PlayerId | null = null
+  let handIdx = findHandIndex(player, bounceId)
+  if (handIdx >= 0) fromId = playerId
+  else {
+    handIdx = findHandIndex(opponent, bounceId)
+    if (handIdx >= 0) fromId = oppId
+  }
+  if (fromId === null) {
     return { ...state, interaction: { type: 'idle' } }
   }
-  const card = player.hand[handIdx]
+  const card =
+    fromId === playerId ? player.hand[handIdx] : opponent.hand[handIdx]
   const zone = player.field.findIndex((z) => z === null)
   if (zone < 0) {
     return { ...state, interaction: { type: 'idle' } }
@@ -3777,11 +3911,18 @@ export function cancelSoluySwap(state: GameState): GameState {
   opponent = undone.opponent
   player = undoAlkataLeft(player, card)
 
-  const hand = [...player.hand]
-  hand.splice(handIdx, 1)
+  if (fromId === playerId) {
+    const hand = [...player.hand]
+    hand.splice(handIdx, 1)
+    player = { ...player, hand }
+  } else {
+    const hand = [...opponent.hand]
+    hand.splice(handIdx, 1)
+    opponent = { ...opponent, hand }
+  }
   const field = [...player.field]
   field[zone] = card
-  player = { ...player, hand, field }
+  player = { ...player, field }
   return {
     ...state,
     players: { ...state.players, [playerId]: player, [oppId]: opponent },
@@ -4009,8 +4150,13 @@ export function pickShorinDiscard(
     ...player,
     hand,
     field,
-    graveyard: [...player.graveyard, { ...discarded, faceDown: false }],
   }
+  let players = depositToOwnerGy(
+    { ...state.players, [playerId]: player },
+    { ...discarded, faceDown: false },
+    playerId,
+  )
+  player = players[playerId]
 
   const stillHasKata =
     player.deck.some((c) => isKataSpellOrTrap(c.cardId)) ||
@@ -4018,7 +4164,7 @@ export function pickShorinDiscard(
 
   let next: GameState = {
     ...state,
-    players: { ...state.players, [playerId]: player },
+    players,
     selectedCardId: getCard(discarded.cardId).id,
   }
   next = log(next, `โชรินทิ้ง ${getCard(discarded.cardId).nameTh}`)
@@ -4195,8 +4341,13 @@ export function pickSarukaDiscard(
     ...player,
     hand,
     field,
-    graveyard: [...player.graveyard, { ...discarded, faceDown: false }],
   }
+  let players = depositToOwnerGy(
+    { ...state.players, [playerId]: player },
+    { ...discarded, faceDown: false },
+    playerId,
+  )
+  player = players[playerId]
 
   const stillHasKata =
     player.deck.some((c) => isKataSpellOrTrap(c.cardId)) ||
@@ -4204,7 +4355,7 @@ export function pickSarukaDiscard(
 
   let next: GameState = {
     ...state,
-    players: { ...state.players, [playerId]: player },
+    players,
     selectedCardId: getCard(discarded.cardId).id,
   }
   next = log(
@@ -4386,13 +4537,18 @@ export function pickRyukaDiscard(
     ...player,
     hand,
     field,
-    graveyard: [...player.graveyard, { ...discarded, faceDown: false }],
   }
+  let players = depositToOwnerGy(
+    { ...state.players, [playerId]: player },
+    { ...discarded, faceDown: false },
+    playerId,
+  )
+  player = players[playerId]
   discardLeft -= 1
 
   let next: GameState = {
     ...state,
-    players: { ...state.players, [playerId]: player },
+    players,
     selectedCardId: getCard(discarded.cardId).id,
   }
   next = log(
@@ -5026,7 +5182,7 @@ export function pickGuardianTarget(
 
   const lockUntil = otherPlayer(playerId)
   const field = [...player.field]
-  field[mIdx] = { ...target, fieldLockUntil: lockUntil }
+  field[mIdx] = { ...target, battleShieldUntil: lockUntil }
 
   let spellNote = ''
   if (spellInstanceId) {
@@ -5056,7 +5212,7 @@ export function pickGuardianTarget(
   }
   next = log(
     next,
-    `${spellNote} — ${targetDef.nameTh} ถูกล็อกจนจบเทิร์นของ ${state.players[lockUntil].name}`,
+    `${spellNote} — ${targetDef.nameTh} ได้โล่รอดจากการต่อสู้ 1 ครั้ง จนจบเทิร์นของ ${state.players[lockUntil].name}`,
   )
   return settleAfterKataResolution(next, playerId)
 }
@@ -5259,24 +5415,32 @@ function resolveSameSideClash(
   const defB = getCard(monB.cardId)
   const atkA = getEffectiveAtk(state, controllerId, monA.cardId, monA.instanceId)
   const atkB = getEffectiveAtk(state, controllerId, monB.cardId, monB.instanceId)
-  const lockA = isFieldLocked(monA)
-  const lockB = isFieldLocked(monB)
 
   const field = [...controller.field]
-  let gy = [...controller.graveyard]
   let destroyedA = false
   let destroyedB = false
   const destroyNotes: string[] = []
+  let shieldNotes: string[] = []
+  let players: GameState['players'] = {
+    ...state.players,
+    [controllerId]: controller,
+  }
 
-  const tryDestroy = (idx: number, mon: CardInstance, locked: boolean): boolean => {
-    if (locked) return false
+  const tryDestroy = (idx: number, mon: CardInstance): boolean => {
+    if (hasBattleShield(mon)) {
+      field[idx] = consumeBattleShield(mon)
+      controller = { ...controller, field: [...field] }
+      players = { ...players, [controllerId]: controller }
+      shieldNotes.push(
+        `${getCard(mon.cardId).nameTh} ใช้โล่คาถาผู้ป้องกัน — รอดจากการต่อสู้`,
+      )
+      return false
+    }
     field[idx] = null
     let p: PlayerState = {
       ...controller,
       field: [...field],
-      graveyard: [...gy, { ...mon, faceDown: false }],
     }
-    gy = p.graveyard
     const res = afterMonsterDestroyed(p, mon)
     p = res.player
     // Preserve nulls we already set
@@ -5286,45 +5450,49 @@ function resolveSameSideClash(
     }
     controller = { ...p, field: nf }
     for (let i = 0; i < field.length; i++) field[i] = nf[i] ?? null
+    players = { ...players, [controllerId]: controller }
+    players = depositToOwnerGy(players, { ...mon, faceDown: false }, controllerId)
+    controller = players[controllerId]
     if (res.note) destroyNotes.push(res.note)
     return true
   }
 
   if (atkA > atkB) {
-    destroyedB = tryDestroy(bIdx, monB, lockB)
+    destroyedB = tryDestroy(bIdx, monB)
   } else if (atkB > atkA) {
-    destroyedA = tryDestroy(aIdx, monA, lockA)
+    destroyedA = tryDestroy(aIdx, monA)
   } else {
-    destroyedA = tryDestroy(aIdx, monA, lockA)
-    destroyedB = tryDestroy(bIdx, monB, lockB)
+    destroyedA = tryDestroy(aIdx, monA)
+    destroyedB = tryDestroy(bIdx, monB)
   }
 
   const bothDestroyed = destroyedA && destroyedB
 
   let note = `${defA.nameTh} (${atkA}) vs ${defB.nameTh} (${atkB})`
   if (atkA > atkB) {
-    note += lockB
-      ? ` — ${defB.nameTh} ถูกล็อก รอด`
-      : ` — ทำลาย ${defB.nameTh}`
+    note += destroyedB
+      ? ` — ทำลาย ${defB.nameTh}`
+      : ` — ${defB.nameTh} รอดด้วยโล่`
   } else if (atkB > atkA) {
-    note += lockA
-      ? ` — ${defA.nameTh} ถูกล็อก รอด`
-      : ` — ทำลาย ${defA.nameTh}`
+    note += destroyedA
+      ? ` — ทำลาย ${defA.nameTh}`
+      : ` — ${defA.nameTh} รอดด้วยโล่`
   } else {
     const parts: string[] = []
     if (destroyedA) parts.push(`ทำลาย ${defA.nameTh}`)
-    else if (lockA) parts.push(`${defA.nameTh} ล็อก`)
+    else parts.push(`${defA.nameTh} รอดด้วยโล่`)
     if (destroyedB) parts.push(`ทำลาย ${defB.nameTh}`)
-    else if (lockB) parts.push(`${defB.nameTh} ล็อก`)
+    else parts.push(`${defB.nameTh} รอดด้วยโล่`)
     note += ` — พลังเท่ากัน · ${parts.join(' · ')}`
   }
 
   let next: GameState = {
     ...state,
-    players: { ...state.players, [controllerId]: controller },
+    players: { ...players, [controllerId]: controller },
     interaction: { type: 'idle' },
   }
   for (const n of destroyNotes) next = log(next, n)
+  for (const n of shieldNotes) next = log(next, n)
 
   return { state: next, bothDestroyed, note }
 }
@@ -6131,13 +6299,17 @@ export function pickAlkataDebuff(
     opponent = {
       ...opponent,
       field: cleared,
-      graveyard: [...opponent.graveyard, { ...doomed, faceDown: false }],
     }
     const destroyed = afterMonsterDestroyed(opponent, doomed)
     opponent = destroyed.player
+    const players = depositToOwnerGy(
+      { ...next.players, [oppId]: opponent },
+      { ...doomed, faceDown: false },
+      oppId,
+    )
     next = {
       ...next,
-      players: { ...next.players, [oppId]: opponent },
+      players,
     }
     next = log(next, `${targetDef.nameTh} ATK เป็น 0 — ถูกทำลาย!`)
     if (destroyed.note) next = log(next, destroyed.note)
@@ -6327,23 +6499,25 @@ export function pickBetaExtraDestroy(
   if (tIdx < 0) return state
 
   const target = defender.field[tIdx]!
-  if (isFieldLocked(target)) {
-    return log(state, `${getCard(target.cardId).nameTh} ถูกล็อก — ทำลายไม่ได้`)
-  }
   const targetDef = getCard(target.cardId)
   const field = [...defender.field]
   field[tIdx] = null
   defender = {
     ...defender,
     field,
-    graveyard: [...defender.graveyard, target],
   }
   const destroyed = afterMonsterDestroyed(defender, target)
   defender = destroyed.player
 
+  let players = depositToOwnerGy(
+    { ...state.players, [defenderId]: defender },
+    target,
+    defenderId,
+  )
+
   let next: GameState = {
     ...state,
-    players: { ...state.players, [defenderId]: defender },
+    players,
     interaction: { type: 'idle' },
     selectedCardId: targetDef.id,
   }
@@ -6624,27 +6798,22 @@ function destroyActivatorSource(
     if (idx < 0) return { state, destroyedName }
     const mon = activator.field[idx]!
     destroyedName = getCard(mon.cardId).nameTh
-    if (isFieldLocked(mon)) {
-      return {
-        state: log(
-          state,
-          `${destroyedName} ถูกล็อก — ทำลายด้วยคาถาสกัดกั้นไม่ได้`,
-        ),
-        destroyedName,
-      }
-    }
     const field = [...activator.field]
     field[idx] = null
     activator = {
       ...activator,
       field,
-      graveyard: [...activator.graveyard, { ...mon, faceDown: false }],
     }
     const res = afterMonsterDestroyed(activator, mon)
     activator = res.player
+    let players = depositToOwnerGy(
+      { ...state.players, [activatorId]: activator },
+      { ...mon, faceDown: false },
+      activatorId,
+    )
     let next: GameState = {
       ...state,
-      players: { ...state.players, [activatorId]: activator },
+      players,
     }
     if (res.note) next = log(next, res.note)
     return { state: next, destroyedName }
@@ -6660,12 +6829,16 @@ function destroyActivatorSource(
     activator = {
       ...activator,
       hand,
-      graveyard: [...activator.graveyard, { ...card, faceDown: false }],
     }
+    const players = depositToOwnerGy(
+      { ...state.players, [activatorId]: activator },
+      { ...card, faceDown: false },
+      activatorId,
+    )
     return {
       state: {
         ...state,
-        players: { ...state.players, [activatorId]: activator },
+        players,
       },
       destroyedName,
     }
@@ -6679,12 +6852,16 @@ function destroyActivatorSource(
     activator = {
       ...activator,
       spellTrap,
-      graveyard: [...activator.graveyard, { ...card, faceDown: false }],
     }
+    const players = depositToOwnerGy(
+      { ...state.players, [activatorId]: activator },
+      { ...card, faceDown: false },
+      activatorId,
+    )
     return {
       state: {
         ...state,
-        players: { ...state.players, [activatorId]: activator },
+        players,
       },
       destroyedName,
     }
@@ -7439,21 +7616,22 @@ function resolveBattle(
   //   higher → destroy defender (no pierce to HP)
   //   equal  → both destroyed
   //   lower  → destroy attacker (+ rebound damage)
-  // Field-locked monsters cannot leave the field.
-  const defLocked = isFieldLocked(defMonster)
-  const atkLocked = isFieldLocked(atkMonster)
+  // Guardian battle shield: survive battle destroy once, then consumed.
+  const defShield = hasBattleShield(defMonster)
+  const atkShield = hasBattleShield(atkMonster)
 
   if (atkPower > defPower) {
     let destroyedNote: string | null = null
-    if (defLocked) {
-      dField[tIdx] = defMonster
+    let shieldSaved = false
+    if (defShield) {
+      dField[tIdx] = consumeBattleShield(defMonster)
       defender = { ...defender, field: dField }
+      shieldSaved = true
     } else {
       dField[tIdx] = null
       defender = {
         ...defender,
         field: dField,
-        graveyard: [...defender.graveyard, defMonster],
       }
       const destroyed = afterMonsterDestroyed(defender, defMonster)
       defender = destroyed.player
@@ -7463,13 +7641,20 @@ function resolveBattle(
     aField[aIdx] = { ...atkMonster, hasAttacked: true }
     attacker = { ...attacker, field: aField }
 
+    let players: GameState['players'] = {
+      ...state.players,
+      [attackerId]: attacker,
+      [defender.id]: defender,
+    }
+    if (!shieldSaved) {
+      players = depositToOwnerGy(players, defMonster, defender.id)
+      attacker = players[attackerId]
+      defender = players[defender.id]
+    }
+
     next = {
       ...state,
-      players: {
-        ...state.players,
-        [attackerId]: attacker,
-        [defender.id]: defender,
-      },
+      players,
       interaction: { type: 'idle' },
       awaitingTrap: false,
     }
@@ -7477,78 +7662,91 @@ function resolveBattle(
     for (const n of stealNotes) next = log(next, n)
     next = log(
       next,
-      defLocked
-        ? `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — ${defCard.nameTh} ถูกล็อก รอดจากการถูกทำลาย`
+      shieldSaved
+        ? `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — ${defCard.nameTh} ใช้โล่คาถาผู้ป้องกัน รอดจากการต่อสู้`
         : `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — ทำลาย ${defCard.nameTh}`,
     )
     if (destroyedNote) next = log(next, destroyedNote)
   } else if (atkPower === defPower) {
     let atkDestroyedNote: string | null = null
     let defDestroyedNote: string | null = null
-    if (!atkLocked) {
+    let atkSaved = false
+    let defSaved = false
+    if (atkShield) {
+      aField[aIdx] = { ...consumeBattleShield(atkMonster), hasAttacked: true }
+      attacker = { ...attacker, field: aField }
+      atkSaved = true
+    } else {
       aField[aIdx] = null
       attacker = {
         ...attacker,
         field: aField,
-        graveyard: [...attacker.graveyard, atkMonster],
       }
       const atkDestroyed = afterMonsterDestroyed(attacker, atkMonster)
       attacker = atkDestroyed.player
       atkDestroyedNote = atkDestroyed.note
-    } else {
-      aField[aIdx] = { ...atkMonster, hasAttacked: true }
-      attacker = { ...attacker, field: aField }
     }
-    if (!defLocked) {
+    if (defShield) {
+      dField[tIdx] = consumeBattleShield(defMonster)
+      defender = { ...defender, field: dField }
+      defSaved = true
+    } else {
       dField[tIdx] = null
       defender = {
         ...defender,
         field: dField,
-        graveyard: [...defender.graveyard, defMonster],
       }
       const defDestroyed = afterMonsterDestroyed(defender, defMonster)
       defender = defDestroyed.player
       defDestroyedNote = defDestroyed.note
-    } else {
-      dField[tIdx] = defMonster
-      defender = { ...defender, field: dField }
     }
+
+    let players: GameState['players'] = {
+      ...state.players,
+      [attackerId]: attacker,
+      [defender.id]: defender,
+    }
+    if (!atkSaved) {
+      players = depositToOwnerGy(players, atkMonster, attackerId)
+    }
+    if (!defSaved) {
+      players = depositToOwnerGy(players, defMonster, defender.id)
+    }
+    attacker = players[attackerId]
+    defender = players[defender.id]
 
     next = {
       ...state,
-      players: {
-        ...state.players,
-        [attackerId]: attacker,
-        [defender.id]: defender,
-      },
+      players,
       interaction: { type: 'idle' },
       awaitingTrap: false,
     }
     if (attackDrawNote) next = log(next, attackDrawNote)
     for (const n of stealNotes) next = log(next, n)
-    const lockNote =
-      atkLocked || defLocked
-        ? ` (ล็อก: ${[atkLocked ? atkDef.nameTh : null, defLocked ? defCard.nameTh : null].filter(Boolean).join(' · ')} รอด)`
+    const shieldNote =
+      atkSaved || defSaved
+        ? ` (โล่: ${[atkSaved ? atkDef.nameTh : null, defSaved ? defCard.nameTh : null].filter(Boolean).join(' · ')} รอด)`
         : ''
     next = log(
       next,
-      `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — พลังเท่ากัน${lockNote || ' ทำลายทั้งคู่!'}`,
+      `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — พลังเท่ากัน${shieldNote || ' ทำลายทั้งคู่!'}`,
     )
     if (atkDestroyedNote) next = log(next, atkDestroyedNote)
     if (defDestroyedNote) next = log(next, defDestroyedNote)
   } else {
     const rebound = defPower - atkPower
     let destroyedNote: string | null = null
-    if (atkLocked) {
-      aField[aIdx] = { ...atkMonster, hasAttacked: true }
+    let atkSaved = false
+    if (atkShield) {
+      aField[aIdx] = { ...consumeBattleShield(atkMonster), hasAttacked: true }
       attacker = { ...attacker, field: aField }
+      atkSaved = true
       if (rebound > 0) attacker = applyDamage(attacker, rebound, true)
     } else {
       aField[aIdx] = null
       attacker = {
         ...attacker,
         field: aField,
-        graveyard: [...attacker.graveyard, atkMonster],
       }
       const destroyed = afterMonsterDestroyed(attacker, atkMonster)
       attacker = destroyed.player
@@ -7556,13 +7754,20 @@ function resolveBattle(
       if (rebound > 0) attacker = applyDamage(attacker, rebound, true)
     }
 
+    let players: GameState['players'] = {
+      ...state.players,
+      [attackerId]: attacker,
+      [defender.id]: defender,
+    }
+    if (!atkSaved) {
+      players = depositToOwnerGy(players, atkMonster, attackerId)
+      attacker = players[attackerId]
+      defender = players[defender.id]
+    }
+
     next = {
       ...state,
-      players: {
-        ...state.players,
-        [attackerId]: attacker,
-        [defender.id]: defender,
-      },
+      players,
       interaction: { type: 'idle' },
       awaitingTrap: false,
     }
@@ -7570,8 +7775,8 @@ function resolveBattle(
     for (const n of stealNotes) next = log(next, n)
     next = log(
       next,
-      atkLocked
-        ? `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — ตีแพ้แต่ถูกล็อก รอด${rebound > 0 ? ` ดาเมจสะท้อน ${rebound}` : ''}`
+      atkSaved
+        ? `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — ตีแพ้แต่ใช้โล่รอด${rebound > 0 ? ` ดาเมจสะท้อน ${rebound}` : ''}`
         : `${atkDef.nameTh} (${atkPower}) vs ${defCard.nameTh} (${defPower}) — ตีแพ้ ทำลาย ${atkDef.nameTh}${rebound > 0 ? ` ดาเมจสะท้อน ${rebound} (พลังงาน +${rebound})` : ''}`,
     )
     if (destroyedNote) next = log(next, destroyedNote)

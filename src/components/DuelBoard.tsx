@@ -541,7 +541,7 @@ export function DuelBoard() {
                   : specialModding
                     ? 'ดัดแปลงขั้นพิเศษ — เลือกหุ่นยนต์แห่งการทำลายบนสนามเรา'
                   : guardianPicking
-                    ? 'คาถาผู้ป้องกัน — เลือกจอมเวทย์บนสนามเราเพื่อล็อกจนจบเทิร์นฝ่ายตรงข้าม'
+                    ? 'คาถาผู้ป้องกัน — เลือกจอมเวทย์บนสนามเรา เพื่อรอดจากการต่อสู้ 1 ครั้งจนจบเทิร์นฝ่ายตรงข้าม'
                   : buddyPicking
                     ? buddyFirstId
                       ? 'คาถาคู่หู — เลือกจอมเวทย์ตัวที่สองเพื่อรวมพลังโจมตีจนจบเทิร์น'
@@ -690,12 +690,21 @@ export function DuelBoard() {
                 <div className="field-row opp-field">
                 <button
                   type="button"
-                  className="pile gy"
+                  className={`pile gy ${opponent.graveyard.length > 0 ? 'has-top' : ''}`}
                   onClick={() => setGyView('opponent')}
                   title="ดูสุสาน"
                 >
-                  <span>GY</span>
-                  <b>{opponent.graveyard.length}</b>
+                  {opponent.graveyard.length > 0 && (
+                    <CardView
+                      instance={opponent.graveyard[opponent.graveyard.length - 1]}
+                      size="tiny"
+                      className="gy-top-card"
+                    />
+                  )}
+                  <span className="pile-label">
+                    <span>GY</span>
+                    <b>{opponent.graveyard.length}</b>
+                  </span>
                 </button>
                 {opponent.field.map((m, i) => {
                   const protectedTarget =
@@ -711,7 +720,7 @@ export function DuelBoard() {
                     {m ? (
                       <CardView
                         instance={m}
-                        className={m.fieldLockUntil ? 'field-locked' : ''}
+                        className={m.battleShieldUntil ? 'battle-shield' : ''}
                         size="tiny"
                         exhausted={!!m.hasAttacked || !!m.asleepUntil}
                         atkDisplay={getEffectiveAtk(
@@ -775,12 +784,21 @@ export function DuelBoard() {
                 >
                 <button
                   type="button"
-                  className="pile gy"
+                  className={`pile gy ${player.graveyard.length > 0 ? 'has-top' : ''}`}
                   onClick={() => setGyView('player')}
                   title="ดูสุสาน"
                 >
-                  <span>GY</span>
-                  <b>{player.graveyard.length}</b>
+                  {player.graveyard.length > 0 && (
+                    <CardView
+                      instance={player.graveyard[player.graveyard.length - 1]}
+                      size="tiny"
+                      className="gy-top-card"
+                    />
+                  )}
+                  <span className="pile-label">
+                    <span>GY</span>
+                    <b>{player.graveyard.length}</b>
+                  </span>
                 </button>
                 {player.field.map((m, i) => (
                   <div
@@ -812,7 +830,7 @@ export function DuelBoard() {
                     {m ? (
                       <CardView
                         instance={m}
-                        className={m.fieldLockUntil ? 'field-locked' : ''}
+                        className={m.battleShieldUntil ? 'battle-shield' : ''}
                         size="tiny"
                         exhausted={!!m.hasAttacked || !!m.asleepUntil}
                         atkDisplay={getEffectiveAtk(

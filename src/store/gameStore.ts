@@ -80,6 +80,7 @@ import {
   pickAgathaSearch,
   pickNoahMill,
   pickSoraDestroy,
+  skipSoraDestroy,
   pickSoulDrainSacrifice,
   pickSoulDrainTarget,
   pickAlkataPlot,
@@ -2449,7 +2450,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         const pick = oppMonsters[0]?.id
         let next = g
         if (pick) next = pickSoraDestroy(g, 'opponent', pick)
-        else next = { ...g, interaction: { type: 'idle' } }
+        else next = skipSoraDestroy(g, 'opponent')
         set({ game: next, aiThinking: false })
         if (next.winner) {
           set({ screen: 'result' })

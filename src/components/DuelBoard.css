@@ -658,10 +658,10 @@ button.coach-aim.direct-btn {
   margin: 0;
 }
 
-.zone .card-shell.field-locked {
-  outline: 2px solid rgba(180, 140, 255, 0.9);
+.zone .card-shell.battle-shield {
+  outline: 2px solid rgba(220, 190, 100, 0.95);
   outline-offset: 2px;
-  box-shadow: 0 0 14px rgba(140, 100, 220, 0.5);
+  box-shadow: 0 0 12px rgba(200, 160, 60, 0.45);
 }
 
 .opp-hand,
@@ -798,11 +798,42 @@ button.coach-aim.direct-btn {
   border: 1px solid rgba(180, 140, 120, 0.5);
   background: linear-gradient(180deg, rgba(40, 28, 20, 0.75), rgba(12, 8, 6, 0.9));
   color: #d0b090;
+  overflow: hidden;
+}
+
+.pile.gy.has-top {
+  background: rgba(8, 6, 4, 0.55);
+}
+
+.pile.gy .gy-top-card {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  opacity: 0.38;
+  pointer-events: none;
+  border-radius: 7px;
+  overflow: hidden;
+}
+
+.pile.gy .pile-label {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
 }
 
 .pile.gy:hover {
   border-color: #e0c090;
   box-shadow: 0 0 12px rgba(220, 160, 80, 0.35);
+}
+
+.pile.gy.has-top:hover .gy-top-card {
+  opacity: 0.5;
 }
 
 .pile.deck {

@@ -1,5 +1,5 @@
 import { getCard } from '../data/cards'
-import type { CardInstance, GameState, PlayerState } from '../types/game'
+import type { CardInstance, GameState, PlayerId, PlayerState } from '../types/game'
 import { v4 as uuid } from 'uuid'
 
 /** Bot HP in practice so the lesson ends with a real kill. */
@@ -32,13 +32,18 @@ export const TUTORIAL_BOT_OPENING_HAND = [
   'S0021',
 ] as const
 
-export function makeMockInstance(cardId: string, turn = 0): CardInstance {
+export function makeMockInstance(
+  cardId: string,
+  turn = 0,
+  originalOwnerId?: PlayerId,
+): CardInstance {
   return {
     instanceId: uuid(),
     cardId,
     canAttack: false,
     hasAttacked: false,
     summonTurn: turn,
+    ...(originalOwnerId ? { originalOwnerId } : {}),
   }
 }
 
@@ -49,7 +54,7 @@ export function mockHand(player: PlayerState, cardIds: readonly string[]): Playe
   for (const id of cardIds) {
     const i = deck.findIndex((c) => c.cardId === id)
     if (i >= 0) hand.push(deck.splice(i, 1)[0]!)
-    else hand.push(makeMockInstance(id))
+    else hand.push(makeMockInstance(id, 0, player.id))
   }
   for (const c of player.hand) {
     if (!hand.some((h) => h.instanceId === c.instanceId)) {
