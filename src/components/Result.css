@@ -5,14 +5,22 @@
   --muted: #9bb0a0;
   position: relative;
   isolation: isolate;
+  min-height: 100%;
   min-height: 100dvh;
-  min-height: 100vh;
-  overflow: hidden;
+  max-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--ink);
   background: #080e0c;
+  padding:
+    max(12px, var(--safe-t))
+    max(12px, var(--safe-r))
+    max(12px, var(--safe-b))
+    max(12px, var(--safe-l));
 }
 
 .result-art {
@@ -148,6 +156,56 @@
   text-align: center;
   gap: 22px;
   padding: 8px 0 24px;
+}
+
+@media (max-width: 480px) {
+  .result-duel-stats {
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .rf-hp b {
+    font-size: 18px;
+  }
+
+  .result-btn {
+    min-height: 48px;
+  }
+}
+
+@media (max-height: 520px) {
+  .result-stage {
+    gap: 12px;
+    padding-bottom: 12px;
+  }
+
+  .result-banner {
+    padding: 18px 16px 14px;
+  }
+
+  .result-title {
+    font-size: clamp(32px, 8vw, 48px);
+  }
+
+  .result-crest {
+    width: 28px;
+    height: 28px;
+    margin-bottom: 6px;
+  }
+
+  .result-art {
+    animation: none;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .result-art {
+    animation: none;
+  }
+
+  .result-btn.primary:hover {
+    transform: none;
+  }
 }
 
 .result-brand {
@@ -465,16 +523,5 @@
   }
   to {
     transform: scaleX(1);
-  }
-}
-
-@media (max-width: 480px) {
-  .result-duel-stats {
-    gap: 8px;
-    padding: 12px;
-  }
-
-  .rf-hp b {
-    font-size: 18px;
   }
 }

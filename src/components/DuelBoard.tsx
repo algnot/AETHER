@@ -529,6 +529,7 @@ export function DuelBoard() {
                           size="tiny"
                           faceDown={faceDown}
                           selected={false}
+                          onClick={() => !faceDown && hoverCard(c.cardId)}
                           onMouseEnter={() => !faceDown && hoverCard(c.cardId)}
                         />
                       </div>
@@ -593,8 +594,11 @@ export function DuelBoard() {
                             ? lungeOffset ?? undefined
                             : undefined
                         }
+                        onClick={() => {
+                          hoverCard(m.cardId)
+                          onMonsterClick(m.instanceId, 'opponent')
+                        }}
                         onMouseEnter={() => hoverCard(m.cardId)}
-                        onClick={() => onMonsterClick(m.instanceId, 'opponent')}
                       />
                     ) : null}
                   </div>
@@ -718,8 +722,11 @@ export function DuelBoard() {
                             ? lungeOffset ?? undefined
                             : undefined
                         }
+                        onClick={() => {
+                          hoverCard(m.cardId)
+                          onMonsterClick(m.instanceId, 'player')
+                        }}
                         onMouseEnter={() => hoverCard(m.cardId)}
-                        onClick={() => onMonsterClick(m.instanceId, 'player')}
                       />
                     ) : null}
                   </div>
@@ -777,6 +784,7 @@ export function DuelBoard() {
                           size="tiny"
                           faceDown={faceDown}
                           selected={false}
+                          onClick={() => !faceDown && hoverCard(c.cardId)}
                           onMouseEnter={() => !faceDown && hoverCard(c.cardId)}
                         />
                       </div>
@@ -982,8 +990,11 @@ export function DuelBoard() {
                                       !canDragMonster &&
                                       !canDragSt)
                     }
+                    onClick={() => {
+                      hoverCard(c.cardId)
+                      onHandCardClick(c.instanceId)
+                    }}
                     onMouseEnter={() => hoverCard(c.cardId)}
-                    onClick={() => onHandCardClick(c.instanceId)}
                   />
                 </div>
               )
@@ -1066,7 +1077,10 @@ export function DuelBoard() {
                         key={c.instanceId}
                         type="button"
                         className="trap-pick-item"
-                        onClick={() => onTrapRespond(true, c.instanceId)}
+                        onClick={() => {
+                          hoverCard(c.cardId)
+                          onTrapRespond(true, c.instanceId)
+                        }}
                         onMouseEnter={() => hoverCard(c.cardId)}
                       >
                         <CardView instance={c} size="small" />
@@ -1124,7 +1138,10 @@ export function DuelBoard() {
                           key={c.instanceId}
                           type="button"
                           className={`gy-item ${canInstant ? 'picking' : ''}`}
-                          onClick={() => pickEmergencyCard(c.instanceId)}
+                          onClick={() => {
+                            hoverCard(c.cardId)
+                            pickEmergencyCard(c.instanceId)
+                          }}
                           onMouseEnter={() => hoverCard(c.cardId)}
                           title={
                             canInstant
@@ -1167,7 +1184,10 @@ export function DuelBoard() {
                           key={c.instanceId}
                           type="button"
                           className="gy-item picking"
-                          onClick={() => pickInterferenceCard(c.instanceId)}
+                          onClick={() => {
+                            hoverCard(c.cardId)
+                            pickInterferenceCard(c.instanceId)
+                          }}
                           onMouseEnter={() => hoverCard(c.cardId)}
                           title={`ขึ้นมือ · ฝ่ายตรงข้าม HP +${d.cost}`}
                         >
@@ -1215,7 +1235,10 @@ export function DuelBoard() {
                         key={c.instanceId}
                         type="button"
                         className="gy-item picking"
-                        onClick={() => pickSignalAmpCard(c.instanceId)}
+                        onClick={() => {
+                          hoverCard(c.cardId)
+                          pickSignalAmpCard(c.instanceId)
+                        }}
                         onMouseEnter={() => hoverCard(c.cardId)}
                         title="อัญเชิญ · ถูกทำลายตอนจบเทิร์น"
                       >
@@ -1254,7 +1277,10 @@ export function DuelBoard() {
                         key={c.instanceId}
                         type="button"
                         className="gy-item picking"
-                        onClick={() => pickMinaCard(c.instanceId)}
+                        onClick={() => {
+                          hoverCard(c.cardId)
+                          pickMinaCard(c.instanceId)
+                        }}
                         onMouseEnter={() => hoverCard(c.cardId)}
                       >
                         <CardView instance={c} size="small" />
@@ -1295,7 +1321,10 @@ export function DuelBoard() {
                         key={c.instanceId}
                         type="button"
                         className="gy-item picking"
-                        onClick={() => pickOmegaCard(c.instanceId)}
+                        onClick={() => {
+                          hoverCard(c.cardId)
+                          pickOmegaCard(c.instanceId)
+                        }}
                         onMouseEnter={() => hoverCard(c.cardId)}
                       >
                         <CardView instance={c} size="small" />
@@ -1338,7 +1367,10 @@ export function DuelBoard() {
                         key={c.instanceId}
                         type="button"
                         className="gy-item picking"
-                        onClick={() => pickAlkataDeckCard(c.instanceId)}
+                        onClick={() => {
+                          hoverCard(c.cardId)
+                          pickAlkataDeckCard(c.instanceId)
+                        }}
                         onMouseEnter={() => hoverCard(c.cardId)}
                       >
                         <CardView instance={c} size="small" />
@@ -1377,7 +1409,10 @@ export function DuelBoard() {
                         key={c.instanceId}
                         type="button"
                         className="gy-item picking"
-                        onClick={() => pickAlkataMinaCard(c.instanceId)}
+                        onClick={() => {
+                          hoverCard(c.cardId)
+                          pickAlkataMinaCard(c.instanceId)
+                        }}
                         onMouseEnter={() => hoverCard(c.cardId)}
                       >
                         <CardView instance={c} size="small" />
@@ -1416,7 +1451,10 @@ export function DuelBoard() {
                         key={c.instanceId}
                         type="button"
                         className="gy-item picking"
-                        onClick={() => pickAlkataCallCard(c.instanceId)}
+                        onClick={() => {
+                          hoverCard(c.cardId)
+                          pickAlkataCallCard(c.instanceId)
+                        }}
                         onMouseEnter={() => hoverCard(c.cardId)}
                       >
                         <CardView instance={c} size="small" />
@@ -1455,7 +1493,10 @@ export function DuelBoard() {
                         key={c.instanceId}
                         type="button"
                         className="gy-item picking"
-                        onClick={() => pickAlkataGyCard(c.instanceId)}
+                        onClick={() => {
+                          hoverCard(c.cardId)
+                          pickAlkataGyCard(c.instanceId)
+                        }}
                         onMouseEnter={() => hoverCard(c.cardId)}
                       >
                         <CardView instance={c} size="small" />
@@ -1500,7 +1541,10 @@ export function DuelBoard() {
                         key={c.instanceId}
                         type="button"
                         className="gy-item picking"
-                        onClick={() => pickAlkataRecycleCard(c.instanceId)}
+                        onClick={() => {
+                          hoverCard(c.cardId)
+                          pickAlkataRecycleCard(c.instanceId)
+                        }}
                         onMouseEnter={() => hoverCard(c.cardId)}
                       >
                         <CardView instance={c} size="small" />

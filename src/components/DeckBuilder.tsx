@@ -174,6 +174,10 @@ export function DeckBuilder() {
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null)
   const [hint, setHint] = useState<string | null>(null)
 
+  const isCoarsePointer = () =>
+    typeof window !== 'undefined' &&
+    window.matchMedia('(hover: none), (pointer: coarse)').matches
+
   const showTribe = filter === 'all' || filter === 'monster'
   const showAtk = filter === 'all' || filter === 'monster'
 
@@ -605,7 +609,7 @@ export function DeckBuilder() {
               <div className="deck-copies">
                 {deckCopies.length === 0 && (
                   <p className="deck-empty">
-                    ลากการ์ดจากฝั่งขวา หรือดับเบิลคลิกที่คลัง
+                    แตะการ์ดในคลังเพื่อเพิ่ม · แตะในเด็คเพื่อเอาออก
                   </p>
                 )}
                 {deckCopies.map((copy) => (
@@ -615,12 +619,16 @@ export function DeckBuilder() {
                     draggable
                     onDragStart={(e) => onDragStart(e, copy.cardId, 'deck')}
                     onDragEnd={() => setDragOver(null)}
-                    onClick={() => setPreview(copy.cardId)}
+                    onClick={() => {
+                      setPreview(copy.cardId)
+                      if (isCoarsePointer()) removeOne(copy.cardId)
+                    }}
                     onDoubleClick={() => {
                       setPreview(copy.cardId)
                       removeOne(copy.cardId)
                     }}
                     onMouseEnter={() => {
+                      if (isCoarsePointer()) return
                       setPreview(copy.cardId)
                       setHoverKey(`deck:${copy.key}`)
                     }}
@@ -785,12 +793,16 @@ export function DeckBuilder() {
                         onDragStart(e, row.cardId, 'catalog')
                       }}
                       onDragEnd={() => setDragOver(null)}
-                      onClick={() => setPreview(row.cardId)}
+                      onClick={() => {
+                        setPreview(row.cardId)
+                        if (isCoarsePointer() && canAdd) addOne(row.cardId)
+                      }}
                       onDoubleClick={() => {
                         setPreview(row.cardId)
                         addOne(row.cardId)
                       }}
                       onMouseEnter={() => {
+                        if (isCoarsePointer()) return
                         setPreview(row.cardId)
                         setHoverKey(`catalog:${row.cardId}`)
                       }}

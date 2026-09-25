@@ -1,10 +1,16 @@
 .duel-root {
   display: flex;
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
   overflow: hidden;
   background: #05070a;
   color: #e8eef4;
+  padding-top: var(--safe-t);
+  padding-bottom: var(--safe-b);
+  padding-left: var(--safe-l);
+  padding-right: var(--safe-r);
 }
 
 .duel-stage {
@@ -1434,29 +1440,202 @@ button.coach-aim.direct-btn {
 
 @media (max-width: 900px) {
   .info-panel {
+    position: fixed;
+    left: max(8px, var(--safe-l));
+    right: max(8px, var(--safe-r));
+    bottom: max(8px, var(--safe-b));
+    top: auto;
+    width: auto;
+    min-width: 0;
+    max-width: none;
+    height: auto;
+    max-height: min(46vh, 380px);
+    z-index: 60;
+    border: 1px solid rgba(120, 160, 200, 0.35);
+    border-right: 1px solid rgba(120, 160, 200, 0.35);
+    border-radius: 12px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+    display: flex;
+  }
+
+  .info-panel.empty {
     display: none;
   }
+
+  .info-card-preview {
+    padding: 10px 10px 6px;
+  }
+
+  .info-card-preview .card-shell {
+    --s: 0.72;
+  }
+
   .battle-log {
     display: none;
   }
 
-  .board-play {
-    padding: 0 8px;
+  .duel-topbar {
+    gap: 8px;
+    padding: 6px 10px;
   }
 
-  .phase-dock {
-    position: static;
-    transform: none;
-    width: auto;
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: center;
-    margin-top: 8px;
+  .exit-btn {
+    min-height: 40px;
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+
+  .fighter {
+    padding: 4px 8px;
+    gap: 6px;
+    font-size: 11px;
+  }
+
+  .fighter-mode {
+    display: none;
   }
 
   .board-play {
     flex-direction: column;
-    padding: 0 8px;
+    padding: 0 6px;
+    --slot-w: 52px;
+    --slot-h: 74px;
+    --field-gap: 8px;
+  }
+
+  .phase-dock {
+    position: sticky;
+    right: auto;
+    top: auto;
+    bottom: 0;
+    transform: none;
+    width: 100%;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 4px;
+    padding: 8px 10px max(8px, var(--safe-b));
+    border-radius: 10px 10px 0 0;
+    z-index: 20;
+  }
+
+  .phase-track {
+    display: none;
+  }
+
+  .phase-meta {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .phase-next {
+    min-height: 44px;
+    min-width: 96px;
+    padding: 10px 14px;
+    font-size: 13px;
+  }
+
+  .you-hand {
+    min-height: 108px;
+    height: 108px;
+    padding: 8px 4px 6px;
+  }
+
+  .you-hand .card-shell.size-small {
+    --s: 0.38;
+  }
+
+  .opp-hand {
+    min-height: 40px;
+  }
+
+  .hint-banner {
+    white-space: normal;
+    max-width: calc(100% - 16px);
+    font-size: 12px;
+    line-height: 1.35;
+    text-align: center;
+  }
+}
+
+@media (max-width: 600px) {
+  .board-play {
+    --slot-w: 44px;
+    --slot-h: 62px;
+    --field-gap: 6px;
+  }
+
+  .zone .card-shell.size-tiny {
+    --s: 0.26;
+  }
+
+  .fighter-name {
+    max-width: 64px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .you-hand {
+    min-height: 96px;
+    height: 96px;
+  }
+
+  .you-hand .card-shell.size-small {
+    --s: 0.34;
+  }
+}
+
+@media (max-height: 700px) and (orientation: landscape) {
+  .duel-topbar {
+    padding: 4px 8px;
+  }
+
+  .opp-hand {
+    min-height: 28px;
+  }
+
+  .you-hand {
+    min-height: 78px;
+    height: 78px;
+    padding: 4px;
+  }
+
+  .you-hand .card-shell.size-small {
+    --s: 0.3;
+  }
+
+  .board-play {
+    --slot-w: 40px;
+    --slot-h: 56px;
+    --field-gap: 5px;
+  }
+
+  .phase-dock {
+    padding: 4px 8px;
+  }
+
+  .phase-next {
+    min-height: 36px;
+    padding: 6px 10px;
+  }
+
+  .info-panel {
+    max-height: 42vh;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .you-hand .card-shell:hover {
+    transform: none;
+  }
+
+  .you-hand .card-shell:focus-visible,
+  .you-hand .card-shell.selected {
+    transform: translateY(-8px);
   }
 }
