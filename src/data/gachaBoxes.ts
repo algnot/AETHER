@@ -30,7 +30,7 @@ export const GACHA_BOXES: Record<GachaBoxId, GachaBoxDef> = {
     name: 'Welcome to AETHER',
     nameTh: 'Welcome to AETHER',
     prefix: 'S00',
-    coverArt: '/gacha/box-s00-pack.png',
+    coverArt: '/gacha/box-s00-pack-v2.png',
     backgroundArt: '/gacha/box-s00-bg.png',
     packsPerBox: 20,
     cardsPerPack: 5,

@@ -61,7 +61,7 @@ export function GachaScreen() {
   const [slideDir, setSlideDir] = useState<SlideDir>(null)
   const boxId = BOX_CATALOG[boxIndex]?.id ?? 'S00'
   const boxMeta = getGachaBox(boxId)
-  const coverArt = boxMeta?.coverArt ?? '/gacha/box-s00-pack.png'
+  const coverArt = boxMeta?.coverArt ?? '/gacha/box-s00-pack-v2.png'
   const backgroundArt = boxMeta?.backgroundArt ?? coverArt
 
   const [box, setBox] = useState<GachaBoxView | null>(null)
