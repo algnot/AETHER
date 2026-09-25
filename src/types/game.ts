@@ -97,6 +97,7 @@ export interface CardDefinition {
     | 'dynogr_mage'
     | 'saruka_mage'
     | 'ryuka_mage'
+    | 'zeeka_mage'
     | 'kata_guardian'
     | 'kata_prepare'
     | 'kata_buddy'
@@ -183,6 +184,8 @@ export interface PlayerState {
   ryukaEchoNames?: string[]
   /** Ryuka: need to pick an opponent monster to sleep after a 「คาถา」 resolves */
   ryukaSleepPending?: boolean
+  /** Zeeka: need to pick an opponent monster to ATK-debuff after a 「คาถา」 resolves */
+  zeekaDebuffPending?: boolean
   /** Ryuka: queue a second resolution of this interactive effectId */
   ryukaDoubleQueued?: boolean
   ryukaDoubleEffectId?: string
@@ -307,6 +310,8 @@ export type InteractionMode =
     }
   /** Ryuka — put an opponent monster to sleep until their EOT */
   | { type: 'ryuka_sleep'; ownerId: PlayerId }
+  /** Zeeka — debuff an opponent monster's ATK after 「คาถา」 */
+  | { type: 'zeeka_debuff'; ownerId: PlayerId }
   /** Agatha — recycle คาถา from GY to deck, then fetch คาถา from deck; buff mages */
   | {
       type: 'agatha_search'

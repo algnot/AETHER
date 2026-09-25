@@ -11,6 +11,7 @@ import {
   canActivateNoah,
   canActivateSaruka,
   canActivateRyuka,
+  canActivateZeeka,
   canAlkataHandSummon,
   canPlaySpell,
   canReinforceSummon,
@@ -28,6 +29,7 @@ import {
   beginNoahMill,
   beginSarukaSearch,
   beginRyukaFetch,
+  activateZeekaAtk,
   cancelAlkataDebuff,
   cancelShorinSearch,
   cancelAgathaSearch,
@@ -35,6 +37,7 @@ import {
   cancelSarukaSearch,
   cancelRyukaFetch,
   cancelRyukaSleep,
+  cancelZeekaDebuff,
   pickGuardianTarget,
   cancelGuardianPick,
   pickBuddyTarget,
@@ -77,6 +80,7 @@ import {
   pickRyukaFetch,
   pickRyukaDiscard,
   pickRyukaSleep,
+  pickZeekaDebuff,
   pickAgathaSearch,
   pickNoahMill,
   pickSoraDestroy,
@@ -185,6 +189,8 @@ interface AppStore {
   cancelRyuka: () => void
   pickRyukaSleepMonster: (instanceId: string) => void
   cancelRyukaSleepPick: () => void
+  pickZeekaDebuffMonster: (instanceId: string) => void
+  cancelZeekaDebuffPick: () => void
   pickAgathaCard: (instanceId: string) => void
   cancelAgatha: () => void
   pickNoahCard: (instanceId: string) => void
@@ -745,7 +751,27 @@ export const useAppStore = create<AppStore>((set, get) => ({
   cancelRyukaSleepPick: () => {
     const { game } = get()
     if (!game || game.interaction.type !== 'ryuka_sleep') return
-    set({ game: cancelRyukaSleep(game) })
+    const next = cancelRyukaSleep(game)
+    set({ game: next })
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  pickZeekaDebuffMonster: (instanceId) => {
+    const { game } = get()
+    if (!game) return
+    const next = pickZeekaDebuff(game, 'player', instanceId)
+    set({ game: next })
+    if (next.winner) {
+      set({ screen: 'result' })
+      return
+    }
+    if (next.interaction.type === 'idle') afterPlayerMove(get)
+  },
+
+  cancelZeekaDebuffPick: () => {
+    const { game } = get()
+    if (!game || game.interaction.type !== 'zeeka_debuff') return
+    set({ game: cancelZeekaDebuff(game) })
     afterPlayerMove(get)
   },
 
@@ -1533,6 +1559,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
 
     if (
+      owner === 'opponent' &&
+      game.interaction.type === 'zeeka_debuff' &&
+      game.interaction.ownerId === 'player'
+    ) {
+      const next = pickZeekaDebuff(game, 'player', instanceId)
+      set({ game: next })
+      if (next.winner) {
+        set({ screen: 'result' })
+        return
+      }
+      if (next.interaction.type === 'idle') afterPlayerMove(get)
+      return
+    }
+
+    if (
       owner === 'player' &&
       (game.phase === 'main1' || game.phase === 'main2') &&
       game.activePlayer === 'player' &&
@@ -1564,6 +1605,10 @@ export const useAppStore = create<AppStore>((set, get) => ({
       }
       if (canActivateRyuka(game, 'player', instanceId)) {
         startEffect(beginRyukaFetch(game, 'player', instanceId))
+        return
+      }
+      if (canActivateZeeka(game, 'player', instanceId)) {
+        startEffect(activateZeekaAtk(game, 'player', instanceId))
         return
       }
       if (canActivateAgatha(game, 'player', instanceId)) {
@@ -1856,6 +1901,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
         game.interaction.type === 'saruka_search' ||
         game.interaction.type === 'ryuka_fetch' ||
         game.interaction.type === 'ryuka_sleep' ||
+        game.interaction.type === 'zeeka_debuff' ||
         game.interaction.type === 'agatha_search' ||
         game.interaction.type === 'noah_mill' ||
         game.interaction.type === 'guardian_pick' ||

@@ -47,6 +47,7 @@ const EFFECT_BONUS: Partial<Record<EffectId, number>> = {
   dynogr_mage: 9,
   saruka_mage: 8,
   ryuka_mage: 9,
+  zeeka_mage: 10,
   kata_guardian: 5,
   kata_prepare: 6,
   kata_buddy: 6,

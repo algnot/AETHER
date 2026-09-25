@@ -18,6 +18,8 @@ interface Props {
   preview?: boolean
   size?: CardSize
   selected?: boolean
+  /** Card that triggered the current choice prompt */
+  effectSource?: boolean
   dimmed?: boolean
   showAtk?: boolean
   /** Hide card name on the banner (deck list) */
@@ -53,6 +55,7 @@ export function CardView(props: Props) {
     cardId,
     faceDown,
     selected,
+    effectSource,
     dimmed,
     hideName,
     evolved: evolvedProp,
@@ -73,7 +76,7 @@ export function CardView(props: Props) {
     return (
       <button
         type="button"
-        className={`card-shell size-${size} ${selected ? 'selected' : ''} ${className}`}
+        className={`card-shell size-${size} ${selected ? 'selected' : ''} ${effectSource ? 'effect-source' : ''} ${className}`}
         onClick={onClick}
         onMouseEnter={onMouseEnter}
       >
@@ -114,7 +117,7 @@ export function CardView(props: Props) {
   return (
     <button
       type="button"
-      className={`card-shell size-${size} ${rarityClass} ${selected ? 'selected' : ''} ${dimmed ? 'dimmed' : ''} ${hideName ? 'hide-name' : ''} ${evolved ? 'is-evo' : ''} ${exhausted ? 'exhausted' : ''} ${fx ? `fx-${fx}` : ''} ${className}`}
+      className={`card-shell size-${size} ${rarityClass} ${selected ? 'selected' : ''} ${effectSource ? 'effect-source' : ''} ${dimmed ? 'dimmed' : ''} ${hideName ? 'hide-name' : ''} ${evolved ? 'is-evo' : ''} ${exhausted ? 'exhausted' : ''} ${fx ? `fx-${fx}` : ''} ${className}`}
       style={fxStyle}
       onClick={onClick}
       onMouseEnter={onMouseEnter}

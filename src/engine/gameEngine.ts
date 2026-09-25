@@ -546,6 +546,7 @@ export function advancePhase(state: GameState): GameState {
   if (state.interaction.type === 'saruka_search') return state
   if (state.interaction.type === 'ryuka_fetch') return state
   if (state.interaction.type === 'ryuka_sleep') return state
+  if (state.interaction.type === 'zeeka_debuff') return state
   if (state.interaction.type === 'agatha_search') return state
   if (state.interaction.type === 'noah_mill') return state
   if (state.interaction.type === 'guardian_pick') return state
@@ -642,6 +643,8 @@ function endTurn(state: GameState): GameState {
       endingId === p.id ? undefined : p.ryukaDoubleQueued,
     ryukaDoubleEffectId:
       endingId === p.id ? undefined : p.ryukaDoubleEffectId,
+    zeekaDebuffPending:
+      endingId === p.id ? undefined : p.zeekaDebuffPending,
   })
   player = clearTemp(player, id)
   const waiting = otherPlayer(id)
@@ -1820,6 +1823,19 @@ function isRyukaCard(cardId: string): boolean {
   return getCard(cardId).effectId === 'ryuka_mage'
 }
 
+function isZeekaCard(cardId: string): boolean {
+  return getCard(cardId).effectId === 'zeeka_mage'
+}
+
+function countKataInGy(player: PlayerState): number {
+  return player.graveyard.filter((c) => isKataSpellOrTrap(c.cardId)).length
+}
+
+/** Zeeka active ATK boost — 2 uses/turn when GY kata > 5, else 1 */
+function zeekaAtkUsesPerTurn(player: PlayerState): number {
+  return countKataInGy(player) > 5 ? 2 : 1
+}
+
 function countDynogrOnField(player: PlayerState): number {
   return player.field.filter((m) => m && isDynogrCard(m.cardId)).length
 }
@@ -1881,6 +1897,7 @@ function afterKataActivated(
   let dynogrBuffed = 0
   let sarukaBuffed = 0
   let ryukaSleepMarked = 0
+  let zeekaDebuffMarked = 0
   let field = player.field.map((m) => {
     if (!m) return m
     let next = m
@@ -1910,6 +1927,10 @@ function afterKataActivated(
       ryukaSleepMarked += 1
       next = { ...next, effectUses: (next.effectUses ?? 0) + 1 }
     }
+    if (isZeekaCard(m.cardId) && !next.effectUsed) {
+      zeekaDebuffMarked += 1
+      next = { ...next, effectUsed: true }
+    }
     if (
       isAgathaCard(m.cardId) &&
       (next.effectUses ?? 0) < AGATHA_DRAW_PER_TURN
@@ -1933,6 +1954,8 @@ function afterKataActivated(
   const opp = state.players[otherPlayer(playerId)]
   const canSleep =
     ryukaSleepMarked > 0 && opp.field.some((m) => m !== null)
+  const canZeekaDebuff =
+    zeekaDebuffMarked > 0 && opp.field.some((m) => m !== null)
 
   let next: GameState = state
   const fieldChanged =
@@ -1941,12 +1964,14 @@ function afterKataActivated(
     agathaDrew > 0 ||
     noahMages > 0 ||
     sarukaBuffed > 0 ||
-    ryukaSleepMarked > 0
-  if (fieldChanged || canSleep) {
+    ryukaSleepMarked > 0 ||
+    zeekaDebuffMarked > 0
+  if (fieldChanged || canSleep || canZeekaDebuff) {
     player = {
       ...player,
       field: fieldChanged ? field : player.field,
       ryukaSleepPending: canSleep ? true : player.ryukaSleepPending,
+      zeekaDebuffPending: canZeekaDebuff ? true : player.zeekaDebuffPending,
     }
     next = {
       ...state,
@@ -1989,6 +2014,14 @@ function afterKataActivated(
     )
   }
 
+  if (canZeekaDebuff) {
+    const kataN = countKataInGy(next.players[playerId])
+    next = log(
+      next,
+      `จอมเวทย์ ซีก้า — หลังคาถาจบผล จะลด ATK มอนสเตอร์ฝ่ายตรงข้าม −${kataN}`,
+    )
+  }
+
   if (agathaDrew > 0) {
     let p = { ...next.players[playerId] }
     const before = p.hand.length
@@ -2021,6 +2054,8 @@ export function settleAfterKataResolution(
   let next = maybeStartRyukaDouble(state, playerId)
   if (next.interaction.type !== 'idle') return next
   next = maybeStartRyukaSleep(next, playerId)
+  if (next.interaction.type !== 'idle') return next
+  next = maybeStartZeekaDebuff(next, playerId)
   return next
 }
 
@@ -2155,6 +2190,42 @@ function maybeStartRyukaSleep(
     interaction: { type: 'ryuka_sleep', ownerId: playerId },
   }
   next = log(next, `ริวกะ — เลือกมอนสเตอร์ฝ่ายตรงข้ามให้นอนจนจบเทิร์นของอีกฝ่าย`)
+  return next
+}
+
+function maybeStartZeekaDebuff(
+  state: GameState,
+  playerId: PlayerId,
+): GameState {
+  const player = state.players[playerId]
+  if (!player.zeekaDebuffPending) return state
+  if (state.activePlayer !== playerId) return state
+  if (state.phase === 'battle' || state.awaitingTrap) return state
+
+  const opp = state.players[otherPlayer(playerId)]
+  if (!opp.field.some((m) => m !== null)) {
+    return {
+      ...state,
+      players: {
+        ...state.players,
+        [playerId]: { ...player, zeekaDebuffPending: undefined },
+      },
+    }
+  }
+
+  const kataN = countKataInGy(player)
+  let next: GameState = {
+    ...state,
+    players: {
+      ...state.players,
+      [playerId]: { ...player, zeekaDebuffPending: undefined },
+    },
+    interaction: { type: 'zeeka_debuff', ownerId: playerId },
+  }
+  next = log(
+    next,
+    `ซีก้า — เลือกมอนสเตอร์ฝ่ายตรงข้าม ATK −${Math.max(1, kataN)} (×จำนวน「คาถา」ในสุสาน)`,
+  )
   return next
 }
 
@@ -2330,6 +2401,7 @@ export function canSummon(
   if (state.interaction.type === 'saruka_search') return false
   if (state.interaction.type === 'ryuka_fetch') return false
   if (state.interaction.type === 'ryuka_sleep') return false
+  if (state.interaction.type === 'zeeka_debuff') return false
   if (state.interaction.type === 'agatha_search') return false
   if (state.interaction.type === 'noah_mill') return false
   if (state.interaction.type === 'guardian_pick') return false
@@ -2564,6 +2636,7 @@ export function canPlaySpell(
   if (state.interaction.type === 'saruka_search') return false
   if (state.interaction.type === 'ryuka_fetch') return false
   if (state.interaction.type === 'ryuka_sleep') return false
+  if (state.interaction.type === 'zeeka_debuff') return false
   if (state.interaction.type === 'agatha_search') return false
   if (state.interaction.type === 'noah_mill') return false
   if (state.interaction.type === 'guardian_pick') return false
@@ -4675,11 +4748,143 @@ export function pickRyukaSleep(
     next,
     `ริวกะ — ${targetDef.nameTh} นอนและไม่ตื่นจนกว่าจะจบเทิร์นของ ${opponent.name}`,
   )
-  return next
+  return settleAfterKataResolution(next, playerId)
 }
 
 export function cancelRyukaSleep(state: GameState): GameState {
   if (state.interaction.type !== 'ryuka_sleep') return state
+  return settleAfterKataResolution(
+    { ...state, interaction: { type: 'idle' } },
+    state.interaction.ownerId,
+  )
+}
+
+export function canActivateZeeka(
+  state: GameState,
+  playerId: PlayerId,
+  instanceId: string,
+): boolean {
+  if (state.winner) return false
+  if (state.activePlayer !== playerId) return false
+  if (state.phase !== 'main1' && state.phase !== 'main2') return false
+  if (state.interaction.type !== 'idle') return false
+
+  const player = state.players[playerId]
+  const idx = findFieldIndex(player, instanceId)
+  if (idx < 0) return false
+  const mon = player.field[idx]!
+  if (!isZeekaCard(mon.cardId)) return false
+  const kataN = countKataInGy(player)
+  if (kataN < 3) return false
+  const maxUses = zeekaAtkUsesPerTurn(player)
+  return (mon.effectUses ?? 0) < maxUses
+}
+
+export function activateZeekaAtk(
+  state: GameState,
+  playerId: PlayerId,
+  sourceId: string,
+  opts?: { skipIntercept?: boolean },
+): GameState {
+  if (!canActivateZeeka(state, playerId, sourceId)) return state
+  if (!opts?.skipIntercept) {
+    const blocked = maybeInterceptMonsterEffect(
+      state,
+      playerId,
+      sourceId,
+      'zeeka_mage',
+    )
+    if (blocked) return blocked
+  }
+
+  let player = { ...state.players[playerId] }
+  const idx = findFieldIndex(player, sourceId)
+  if (idx < 0) return state
+  const mon = player.field[idx]!
+  const kataN = countKataInGy(player)
+  const field = [...player.field]
+  field[idx] = {
+    ...mon,
+    atkMod: (mon.atkMod ?? 0) + kataN,
+    effectUses: (mon.effectUses ?? 0) + 1,
+  }
+  player = { ...player, field }
+
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: player },
+    interaction: { type: 'idle' },
+    selectedCardId: getCard(mon.cardId).id,
+  }
+  const atk = getEffectiveAtk(next, playerId, mon.cardId, mon.instanceId)
+  const usesLeft =
+    zeekaAtkUsesPerTurn(player) - (field[idx]!.effectUses ?? 0)
+  next = log(
+    next,
+    `จอมเวทย์ ซีก้า — ATK +${kataN} จาก「คาถา」ในสุสาน → ${atk}${
+      usesLeft > 0 ? ` (ใช้ได้อีก ${usesLeft} ครั้งเทิร์นนี้)` : ''
+    }`,
+  )
+  return next
+}
+
+export function pickZeekaDebuff(
+  state: GameState,
+  playerId: PlayerId,
+  monsterInstanceId: string,
+): GameState {
+  if (state.interaction.type !== 'zeeka_debuff') return state
+  if (state.interaction.ownerId !== playerId) return state
+  if (state.activePlayer !== playerId) return state
+  if (state.winner) return state
+
+  const oppId = otherPlayer(playerId)
+  let player = { ...state.players[playerId] }
+  let opponent = { ...state.players[oppId] }
+  const tIdx = findFieldIndex(opponent, monsterInstanceId)
+  if (tIdx < 0) return state
+
+  const kataN = Math.max(1, countKataInGy(player))
+  const target = opponent.field[tIdx]!
+  const targetDef = getCard(target.cardId)
+  const oppField = [...opponent.field]
+  oppField[tIdx] = { ...target, atkMod: (target.atkMod ?? 0) - kataN }
+  opponent = { ...opponent, field: oppField }
+
+  let next: GameState = {
+    ...state,
+    players: { ...state.players, [playerId]: player, [oppId]: opponent },
+    interaction: { type: 'idle' },
+    selectedCardId: targetDef.id,
+  }
+  const atk = getEffectiveAtk(next, oppId, target.cardId, target.instanceId)
+  next = log(
+    next,
+    `จอมเวทย์ ซีก้า — ${targetDef.nameTh} ATK −${kataN} → ${atk}`,
+  )
+
+  if (atk <= 0) {
+    const doomed = opponent.field[tIdx]!
+    const cleared = [...opponent.field]
+    cleared[tIdx] = null
+    opponent = { ...opponent, field: cleared }
+    const destroyed = afterMonsterDestroyed(opponent, doomed)
+    opponent = destroyed.player
+    const players = depositToOwnerGy(
+      { ...next.players, [oppId]: opponent },
+      { ...doomed, faceDown: false },
+      oppId,
+    )
+    next = { ...next, players }
+    next = log(next, `${targetDef.nameTh} ATK เป็น 0 — ถูกทำลาย!`)
+    if (destroyed.note) next = log(next, destroyed.note)
+  }
+
+  return flushAlkataTriggers(checkWinner(next))
+}
+
+export function cancelZeekaDebuff(state: GameState): GameState {
+  if (state.interaction.type !== 'zeeka_debuff') return state
   return { ...state, interaction: { type: 'idle' } }
 }
 
@@ -6885,6 +7090,8 @@ function resumeMonsterEffectAfterDecline(
       return beginSarukaSearch(state, playerId, sourceId, opts)
     case 'ryuka_mage':
       return beginRyukaFetch(state, playerId, sourceId, opts)
+    case 'zeeka_mage':
+      return activateZeekaAtk(state, playerId, sourceId, opts)
     case 'agatha_mage':
       return beginAgathaSearch(state, playerId, sourceId, opts)
     case 'noah_mage':

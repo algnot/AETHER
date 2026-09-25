@@ -8,6 +8,7 @@ import {
   canActivateNoah,
   canActivateSaruka,
   canActivateRyuka,
+  canActivateZeeka,
   canAttack,
   canPlaySpell,
   canSummon,
@@ -19,6 +20,7 @@ import {
   beginNoahMill,
   beginSarukaSearch,
   beginRyukaFetch,
+  activateZeekaAtk,
   declareAttack,
   discardFromHand,
   getEffectiveAtk,
@@ -32,6 +34,7 @@ import {
   pickRyukaFetch,
   pickRyukaDiscard,
   pickRyukaSleep,
+  pickZeekaDebuff,
   pickAgathaSearch,
   pickNoahMill,
   pickGuardianTarget,
@@ -382,6 +385,13 @@ function scoreSummon(
     case 'scout_unit':
       score += 4
       break
+    case 'zeeka_mage': {
+      const kataN = me.graveyard.filter((c) =>
+        isKataSpellOrTrap(c.cardId),
+      ).length
+      score += kataN >= 3 ? 24 + kataN * 4 : 6
+      break
+    }
     default:
       break
   }
@@ -642,6 +652,19 @@ function collectMainActions(state: GameState): ScoredAction[] {
     })
   }
 
+  const zeeka = me.field.find(
+    (m) => m && canActivateZeeka(state, AI, m.instanceId),
+  )
+  if (zeeka) {
+    actions.push({
+      score: 58,
+      label: 'zeeka',
+      choice: {
+        apply: (s) => activateZeekaAtk(s, AI, zeeka.instanceId),
+      },
+    })
+  }
+
   const agatha = me.field.find(
     (m) => m && canActivateAgatha(state, AI, m.instanceId),
   )
@@ -803,6 +826,25 @@ export function chooseAiAction(state: GameState): AiChoice | null {
     if (!best) return null
     return {
       apply: (s) => pickRyukaSleep(s, AI, best.m.instanceId),
+    }
+  }
+
+  if (
+    state.interaction.type === 'zeeka_debuff' &&
+    state.interaction.ownerId === AI
+  ) {
+    const you = state.players[YOU]
+    const targets = you.field
+      .filter((m): m is NonNullable<typeof m> => !!m)
+      .map((m) => ({
+        m,
+        atk: getEffectiveAtk(state, YOU, m.cardId, m.instanceId),
+      }))
+      .sort((a, b) => b.atk - a.atk)
+    const best = targets[0]
+    if (!best) return null
+    return {
+      apply: (s) => pickZeekaDebuff(s, AI, best.m.instanceId),
     }
   }
 

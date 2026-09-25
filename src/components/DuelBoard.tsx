@@ -7,6 +7,7 @@ import {
   canActivateNoah,
   canActivateSaruka,
   canActivateRyuka,
+  canActivateZeeka,
   canAlkataHandSummon,
   canPlaySpell,
   canReinforceSummon,
@@ -121,6 +122,7 @@ export function DuelBoard() {
   const pickRyukaCard = useAppStore((s) => s.pickRyukaCard)
   const cancelRyuka = useAppStore((s) => s.cancelRyuka)
   const cancelRyukaSleepPick = useAppStore((s) => s.cancelRyukaSleepPick)
+  const cancelZeekaDebuffPick = useAppStore((s) => s.cancelZeekaDebuffPick)
   const pickAgathaCard = useAppStore((s) => s.pickAgathaCard)
   const cancelAgatha = useAppStore((s) => s.cancelAgatha)
   const pickNoahCard = useAppStore((s) => s.pickNoahCard)
@@ -284,6 +286,9 @@ export function DuelBoard() {
   const ryukaSleeping =
     game.interaction.type === 'ryuka_sleep' &&
     game.interaction.ownerId === 'player'
+  const zeekaDebuffing =
+    game.interaction.type === 'zeeka_debuff' &&
+    game.interaction.ownerId === 'player'
   const agathaSearching = game.interaction.type === 'agatha_search'
   const agathaStep =
     game.interaction.type === 'agatha_search' ? game.interaction.step : null
@@ -321,10 +326,6 @@ export function DuelBoard() {
     game.interaction.type === 'soluy_swap'
       ? game.interaction.bounceId
       : undefined
-  const soluySourceId =
-    game.interaction.type === 'soluy_swap'
-      ? game.interaction.sourceId
-      : undefined
   const emergencyCardId =
     game.interaction.type === 'emergency_summon'
       ? game.interaction.cardInstanceId
@@ -342,6 +343,7 @@ export function DuelBoard() {
     !sarukaSearching &&
     !ryukaSearching &&
     !ryukaSleeping &&
+    !zeekaDebuffing &&
     !shorinSearching &&
     !alkataCallDiscarding &&
     !alkataCallSummoning &&
@@ -455,6 +457,130 @@ export function DuelBoard() {
         ? `มอนสเตอร์จะถูกทำลาย — เลือก${trapOfferName} 1 ใบจากมือ (ใช้ได้ใบเดียว)`
         : 'มอนสเตอร์จะถูกทำลาย — ใช้โล่แห่งแสงจากมือได้'
 
+  /** Instance(s) that triggered the current choice prompt */
+  const effectSourceIds = (() => {
+    const ids = new Set<string>()
+    const ix = game.interaction
+    const add = (id?: string | null) => {
+      if (id) ids.add(id)
+    }
+    switch (ix.type) {
+      case 'soluy_swap':
+      case 'shorin_search':
+      case 'saruka_search':
+      case 'ryuka_fetch':
+      case 'agatha_search':
+      case 'noah_mill':
+      case 'alkata_mina_summon':
+      case 'alkata_debuff':
+      case 'alkata_hokana_recycle':
+        add(ix.sourceId)
+        break
+      case 'soul_drain':
+      case 'special_mod':
+      case 'interference_pick':
+      case 'signal_amp_pick':
+      case 'emergency_pick':
+      case 'alkata_call_discard':
+      case 'alkata_call_summon':
+      case 'alkata_plot':
+        add(ix.spellInstanceId)
+        break
+      case 'guardian_pick':
+      case 'buddy_pick':
+      case 'hypnosis_pick':
+      case 'teleport_pick':
+        add(ix.spellInstanceId)
+        break
+      case 'attack':
+        add(ix.attackerInstanceId)
+        break
+      case 'summon':
+      case 'play_spell':
+      case 'set_trap':
+      case 'emergency_summon':
+      case 'sola_pay':
+        add(ix.cardInstanceId)
+        break
+      case 'sora_destroy': {
+        const side = game.players[game.activePlayer]
+        for (const m of side.field) {
+          if (m && getCard(m.cardId).effectId === 'sora_bomb') add(m.instanceId)
+        }
+        break
+      }
+      case 'ryuka_sleep': {
+        const side = game.players[ix.ownerId]
+        for (const m of side.field) {
+          if (m && getCard(m.cardId).effectId === 'ryuka_mage') add(m.instanceId)
+        }
+        break
+      }
+      case 'zeeka_debuff': {
+        const side = game.players[ix.ownerId]
+        for (const m of side.field) {
+          if (m && getCard(m.cardId).effectId === 'zeeka_mage') add(m.instanceId)
+        }
+        break
+      }
+      case 'beta_extra_destroy': {
+        const side = game.players[game.activePlayer]
+        for (const m of side.field) {
+          if (m && getCard(m.cardId).effectId === 'beta_destroyer')
+            add(m.instanceId)
+        }
+        break
+      }
+      default:
+        break
+    }
+    return ids
+  })()
+
+  /** Which board section the player should pick from */
+  const pickSection = ((): 'opp-field' | 'you-field' | 'hand' | 'st' | null => {
+    if (playerTrapWindow) return 'hand'
+    if (
+      betaExtraDestroy ||
+      soraDestroying ||
+      alkataDebuffing ||
+      ryukaSleeping ||
+      zeekaDebuffing ||
+      hypnosisPicking
+    ) {
+      return 'opp-field'
+    }
+    if (
+      soulDraining ||
+      specialModding ||
+      alkataPlotting ||
+      guardianPicking ||
+      buddyPicking ||
+      (soluySwapping && !soluyBounceId) ||
+      summoning ||
+      reinforceSelected ||
+      emergencySummon
+    ) {
+      return 'you-field'
+    }
+    if (
+      discarding ||
+      saraDiscarding ||
+      alkataCallDiscarding ||
+      shorinDiscarding ||
+      sarukaDiscarding ||
+      ryukaDiscarding ||
+      (soluySwapping && !!soluyBounceId) ||
+      alkataHandSummon
+    ) {
+      return 'hand'
+    }
+    if (playingSpell) return 'st'
+    return null
+  })()
+
+  const isEffectSource = (instanceId: string) => effectSourceIds.has(instanceId)
+
   const latestLog = game.log[0]?.text
   const currentPhase =
     game.phase === 'draw' || game.phase === 'end' ? 'main1' : game.phase
@@ -514,6 +640,8 @@ export function DuelBoard() {
             ? 'ริวกะ — เลือก「คาถา」จากสุสานขึ้นมือ'
           : ryukaSleeping
             ? 'ริวกะ — เลือกมอนสเตอร์ฝ่ายตรงข้ามให้นอนจนจบเทิร์นของอีกฝ่าย'
+          : zeekaDebuffing
+            ? 'ซีก้า — เลือกมอนสเตอร์ฝ่ายตรงข้ามเพื่อลด ATK ตามจำนวน「คาถา」ในสุสาน'
         : alkataCallDiscarding
           ? 'เสียงเรียกของอัลคาทา — ทิ้งการ์ดจากมือ 1 ใบ'
         : alkataCallSummoning
@@ -687,7 +815,7 @@ export function DuelBoard() {
 
               <div className="zone-rail" data-coach="zones-opp">
                 <span className="rail-label">โซนมอนสเตอร์</span>
-                <div className="field-row opp-field">
+                <div className={`field-row opp-field ${pickSection === 'opp-field' ? 'pick-section' : ''}`}>
                 <button
                   type="button"
                   className={`pile gy ${opponent.graveyard.length > 0 ? 'has-top' : ''}`}
@@ -714,7 +842,17 @@ export function DuelBoard() {
                   return (
                   <div
                     key={`o-${i}`}
-                    className={`zone ${battleFx?.targetId === m?.instanceId ? 'impact' : ''}`}
+                    className={`zone ${battleFx?.targetId === m?.instanceId ? 'impact' : ''} ${m && isEffectSource(m.instanceId) ? 'effect-source-zone' : ''} ${
+                      m &&
+                      (betaExtraDestroy ||
+                        soraDestroying ||
+                        alkataDebuffing ||
+                        ryukaSleeping ||
+                        zeekaDebuffing ||
+                        (hypnosisPicking && m.instanceId !== hypnosisFirstId))
+                        ? 'pick-target'
+                        : ''
+                    }`}
                     ref={(el) => setZoneRef(m?.instanceId, el)}
                   >
                     {m ? (
@@ -729,6 +867,7 @@ export function DuelBoard() {
                           m.cardId,
                           m.instanceId,
                         )}
+                        effectSource={isEffectSource(m.instanceId)}
                         selected={
                           (attacking !== null &&
                             !m.hasAttacked &&
@@ -737,6 +876,7 @@ export function DuelBoard() {
                           soraDestroying ||
                           alkataDebuffing ||
                           ryukaSleeping ||
+                          zeekaDebuffing ||
                           (hypnosisPicking && m.instanceId !== hypnosisFirstId) ||
                           hypnosisFirstId === m.instanceId
                         }
@@ -779,7 +919,7 @@ export function DuelBoard() {
               <div className="zone-rail" data-coach="zones-you">
                 <span className="rail-label">โซนมอนสเตอร์</span>
                 <div
-                  className={`field-row you-field ${summoning || reinforceSelected || emergencySummon || (reinforcing && dragKind === 'monster') ? 'summoning-lit' : ''}`}
+                  className={`field-row you-field ${summoning || reinforceSelected || emergencySummon || (reinforcing && dragKind === 'monster') ? 'summoning-lit' : ''} ${pickSection === 'you-field' ? 'pick-section' : ''}`}
                   data-coach="summon-zones"
                 >
                 <button
@@ -800,11 +940,32 @@ export function DuelBoard() {
                     <b>{player.graveyard.length}</b>
                   </span>
                 </button>
-                {player.field.map((m, i) => (
+                {player.field.map((m, i) => {
+                  const isPickTarget =
+                    !!m &&
+                    ((soulDraining &&
+                      !!soulSacrificeId &&
+                      m.instanceId !== soulSacrificeId) ||
+                      (specialModding &&
+                        getCard(m.cardId).nameTh.includes(
+                          'หุ่นยนต์แห่งการทำลาย',
+                        )) ||
+                      (alkataPlotting &&
+                        getCard(m.cardId).nameTh.includes('เทพแห่งอัลคาทา')) ||
+                      (guardianPicking &&
+                        getCard(m.cardId).tribe === 'mage') ||
+                      (buddyPicking &&
+                        getCard(m.cardId).tribe === 'mage' &&
+                        m.instanceId !== buddyFirstId) ||
+                      (soluySwapping &&
+                        !soluyBounceId &&
+                        getCard(m.cardId).tribe === 'warrior' &&
+                        getCard(m.cardId).effectId !== 'soluy_swap'))
+                  return (
                   <div
                     key={`p-${i}`}
                     ref={(el) => setZoneRef(m?.instanceId, el)}
-                    className={`zone ${attacking === m?.instanceId ? 'attacking' : ''} ${dragOverZone === i ? 'drop-ready' : ''} ${(summoning || reinforceSelected || emergencySummon || (reinforcing && dragKind === 'monster')) && !m ? 'summon-target' : ''} ${battleFx?.targetId === m?.instanceId ? 'impact' : ''}`}
+                    className={`zone ${attacking === m?.instanceId ? 'attacking' : ''} ${dragOverZone === i ? 'drop-ready' : ''} ${(summoning || reinforceSelected || emergencySummon || (reinforcing && dragKind === 'monster')) && !m ? 'summon-target' : ''} ${battleFx?.targetId === m?.instanceId ? 'impact' : ''} ${m && isEffectSource(m.instanceId) ? 'effect-source-zone' : ''} ${isPickTarget ? 'pick-target' : ''}`}
                     onDragOver={(e) => {
                       if (!canAct || dragKind !== 'monster' || m) {
                         e.dataTransfer.dropEffect = 'none'
@@ -839,36 +1000,20 @@ export function DuelBoard() {
                           m.cardId,
                           m.instanceId,
                         )}
+                        effectSource={isEffectSource(m.instanceId)}
                         selected={
                           attacking === m.instanceId ||
                           soulSacrificeId === m.instanceId ||
                           soluyBounceId === m.instanceId ||
-                          soluySourceId === m.instanceId ||
-                          (soulDraining &&
-                            !!soulSacrificeId &&
-                            m.instanceId !== soulSacrificeId) ||
-                          (specialModding &&
-                            getCard(m.cardId).nameTh.includes(
-                              'หุ่นยนต์แห่งการทำลาย',
-                            )) ||
-                          (alkataPlotting &&
-                            getCard(m.cardId).nameTh.includes('เทพแห่งอัลคาทา')) ||
-                          (guardianPicking &&
-                            getCard(m.cardId).tribe === 'mage') ||
-                          (buddyPicking &&
-                            getCard(m.cardId).tribe === 'mage' &&
-                            m.instanceId !== buddyFirstId) ||
-                          (buddyFirstId === m.instanceId) ||
-                          (soluySwapping &&
-                            !soluyBounceId &&
-                            getCard(m.cardId).tribe === 'warrior' &&
-                            getCard(m.cardId).effectId !== 'soluy_swap') ||
+                          buddyFirstId === m.instanceId ||
+                          isPickTarget ||
                           (canAct &&
                             (game.phase === 'main1' || game.phase === 'main2') &&
                             (canActivateSoluy(game, 'player', m.instanceId) ||
                               canActivateShorin(game, 'player', m.instanceId) ||
                               canActivateSaruka(game, 'player', m.instanceId) ||
                               canActivateRyuka(game, 'player', m.instanceId) ||
+                              canActivateZeeka(game, 'player', m.instanceId) ||
                               canActivateAgatha(game, 'player', m.instanceId) ||
                               canActivateNoah(game, 'player', m.instanceId)))
                         }
@@ -918,7 +1063,8 @@ export function DuelBoard() {
                       />
                     ) : null}
                   </div>
-                ))}
+                  )
+                })}
                 <div className="pile deck" title="เด็ค">
                   <span>DECK</span>
                   <b>{player.deck.length}</b>
@@ -930,7 +1076,7 @@ export function DuelBoard() {
               <div className="st-rail" data-coach="st-you">
                 <span className="rail-label">เวทย์ / กับดัก</span>
                 <div
-                className={`st-strip you-st ${dragOverSt ? 'drop-ready' : ''} ${playingSpell || dragKind === 'st' ? 'st-target' : ''}`}
+                className={`st-strip you-st ${dragOverSt ? 'drop-ready' : ''} ${playingSpell || dragKind === 'st' ? 'st-target' : ''} ${pickSection === 'st' ? 'pick-section' : ''}`}
                 onDragOver={(e) => {
                   if (!canAct || dragKind !== 'st') {
                     e.dataTransfer.dropEffect = 'none'
@@ -959,7 +1105,7 @@ export function DuelBoard() {
                     return (
                       <div
                         key={c.instanceId}
-                        className={`st-slot ${casting ? `casting cast-${castFx!.kind}` : ''}`}
+                        className={`st-slot ${casting ? `casting cast-${castFx!.kind}` : ''} ${isEffectSource(c.instanceId) ? 'effect-source-zone' : ''}`}
                         style={{ zIndex: casting ? 30 : i + 1 }}
                         onClick={(e) => {
                           e.stopPropagation()
@@ -971,6 +1117,7 @@ export function DuelBoard() {
                           cardId={c.cardId}
                           size="tiny"
                           faceDown={faceDown}
+                          effectSource={isEffectSource(c.instanceId)}
                           selected={false}
                           onClick={() => !faceDown && hoverCard(c.cardId)}
                           onMouseEnter={() => !faceDown && hoverCard(c.cardId)}
@@ -1116,6 +1263,12 @@ export function DuelBoard() {
                 </button>
               )}
 
+              {zeekaDebuffing && isPlayerTurn && (
+                <button type="button" className="direct-btn" onClick={cancelZeekaDebuffPick}>
+                  ข้ามซีก้า
+                </button>
+              )}
+
               {alkataHandSummon && (
                 <button type="button" className="direct-btn" onClick={skipAlkataHand}>
                   ข้ามอัญเชิญจากมือ
@@ -1141,7 +1294,7 @@ export function DuelBoard() {
             </div>
           </div>
 
-          <div className="you-hand" data-coach="hand">
+          <div className={`you-hand ${pickSection === 'hand' ? 'pick-section' : ''}`} data-coach="hand">
             {player.hand.map((c) => {
               const trapMatch =
                 playerTrapWindow &&
@@ -1187,7 +1340,7 @@ export function DuelBoard() {
                 <div
                   key={c.instanceId}
                   data-coach-card={c.cardId}
-                  className={`hand-wrap ${canDrag ? 'draggable' : ''} ${tutorialForced ? 'coach-force' : ''} ${tutorialLockedOut ? 'coach-dim' : ''} ${trapMatch || discarding || saraDiscarding || sarukaDiscarding || shorinDiscarding || ryukaDiscarding || alkataCallDiscarding || soluyHandPick || alkataHandPick ? 'trap-ready' : ''} ${summoning === c.instanceId || playingSpell === c.instanceId || reinforceSelected === c.instanceId || trapMatch || discarding || saraDiscarding || sarukaDiscarding || shorinDiscarding || ryukaDiscarding || alkataCallDiscarding || soluyHandPick || alkataHandPick || tutorialForced ? 'picking' : ''}`}
+                  className={`hand-wrap ${canDrag ? 'draggable' : ''} ${tutorialForced ? 'coach-force' : ''} ${tutorialLockedOut ? 'coach-dim' : ''} ${trapMatch || discarding || saraDiscarding || sarukaDiscarding || shorinDiscarding || ryukaDiscarding || alkataCallDiscarding || soluyHandPick || alkataHandPick ? 'trap-ready' : ''} ${summoning === c.instanceId || playingSpell === c.instanceId || reinforceSelected === c.instanceId || trapMatch || discarding || saraDiscarding || sarukaDiscarding || shorinDiscarding || ryukaDiscarding || alkataCallDiscarding || soluyHandPick || alkataHandPick || tutorialForced || isEffectSource(c.instanceId) ? 'picking' : ''} ${isEffectSource(c.instanceId) ? 'effect-source-wrap' : ''}`}
                   draggable={canDrag}
                   onDragStart={(e) => {
                     if (canDragReinforce || canDragMonster)
@@ -1201,6 +1354,7 @@ export function DuelBoard() {
                     instance={c}
                     size="small"
                     costDisplay={getEffectiveCost(c, game, 'player')}
+                    effectSource={isEffectSource(c.instanceId)}
                     selected={
                       summoning === c.instanceId ||
                       playingSpell === c.instanceId ||
@@ -1365,7 +1519,7 @@ export function DuelBoard() {
 
         {emergencyPick && isPlayerTurn && (
           <div className="gy-modal" role="dialog" aria-label="เลือกจากเด็ค">
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>เลือกมอนสเตอร์จากเด็ค</h3>
               </header>
@@ -1411,7 +1565,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="สัญญาณแทรกซ้อน — เลือกจากเด็ค"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>สัญญาณแทรกซ้อน — เลือกหุ่นยนต์แห่งการทำลาย</h3>
               </header>
@@ -1454,7 +1608,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="โชริน — เลือกคาถา"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>โชริน — เลือก「คาถา」จากเด็คหรือสุสาน</h3>
               </header>
@@ -1524,7 +1678,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="คาถาย้ายฉับพลัน — เลือกจอมเวทย์"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>คาถาย้ายฉับพลัน — เลือกจอมเวทย์จากเด็คหรือสุสาน</h3>
                 <button
@@ -1605,7 +1759,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="ซารุกะ — เลือกคาถา"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>ซารุกะ — เลือก「คาถา」จากเด็คหรือสุสาน</h3>
               </header>
@@ -1673,7 +1827,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="ริวกะ — เลือกคาถาจากสุสาน"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>ริวกะ — เลือก「คาถา」จากสุสานขึ้นมือ</h3>
               </header>
@@ -1713,7 +1867,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="อากาธา — เลือกคาถา"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>
                   {agathaStep === 'gy'
@@ -1767,7 +1921,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="โนอา — เลือกคาถาจากเด็ค"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>โนอา — เลือก「คาถา」จากเด็คเพื่อใช้</h3>
                 <button type="button" className="gy-close" onClick={cancelNoah}>
@@ -1810,7 +1964,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="เครื่องขยายสัญญาณ — เลือกจากสุสาน"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>
                   เครื่องขยายสัญญาณ — อัญเชิญจากสุสาน (เหลือ{' '}
@@ -1856,7 +2010,7 @@ export function DuelBoard() {
 
         {minaRecruit && isPlayerTurn && (
           <div className="gy-modal" role="dialog" aria-label={minaRecruitTitle}>
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>{minaRecruitTitle}</h3>
               </header>
@@ -1901,7 +2055,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="โอเมก้า — เลือกจากเด็ค"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>
                   โอเมก้า — เลือกหุ่นยนต์แห่งการทำลาย (เหลือ {omegaRemaining})
@@ -1945,7 +2099,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="ซูล — เลือกจากเด็ค"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>ซูล — เลือกเทพแห่งอัลคาทาจากเด็ค (ยกเว้นซูล)</h3>
                 <button type="button" className="gy-close" onClick={skipAlkataDeck}>
@@ -1991,7 +2145,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="มิน่า — อัญเชิญจากเด็ค"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>มิน่า — เลือกเทพแห่งอัลคาทาจากเด็คเพื่ออัญเชิญ</h3>
                 <button type="button" className="gy-close" onClick={skipAlkataMina}>
@@ -2033,7 +2187,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="เสียงเรียกของอัลคาทา — อัญเชิญจากเด็ค"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>เสียงเรียกของอัลคาทา — เลือกเทพแห่งอัลคาทาจากเด็ค</h3>
                 <button type="button" className="gy-close" onClick={skipAlkataCall}>
@@ -2075,7 +2229,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="เทพแห่งอัลคาทา — เลือกจากสุสาน"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>เทพแห่งอัลคาทา — เลือกจากสุสาน</h3>
                 <button type="button" className="gy-close" onClick={skipAlkataGy}>
@@ -2117,7 +2271,7 @@ export function DuelBoard() {
             role="dialog"
             aria-label="โฮคาน่า — กลับเข้าเด็ค"
           >
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>
                   โฮคาน่า — กลับเข้าเด็ค (เหลือ {alkataRecycleRemaining})
@@ -2161,7 +2315,7 @@ export function DuelBoard() {
 
         {gyView && (
           <div className="gy-modal" role="dialog" aria-label={gyTitle}>
-            <div className="gy-panel">
+            <div className="gy-panel pick-section">
               <header className="gy-head">
                 <h3>{gyTitle}</h3>
                 <button type="button" className="gy-close" onClick={() => setGyView(null)}>

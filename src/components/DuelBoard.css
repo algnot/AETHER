@@ -278,6 +278,54 @@
   text-shadow: 0 0 10px rgba(240, 208, 128, 0.5);
 }
 
+.hand-wrap.effect-source-wrap .card-shell {
+  z-index: 6;
+}
+
+.gy-panel.pick-section {
+  outline: 2px solid rgba(245, 215, 110, 0.55);
+  outline-offset: 2px;
+  box-shadow: 0 0 24px rgba(245, 215, 110, 0.2);
+}
+
+.opp-field.pick-section {
+  outline-color: rgba(255, 140, 120, 0.65);
+  box-shadow: 0 0 18px rgba(255, 120, 100, 0.22);
+}
+
+@keyframes pick-section-pulse {
+  0%,
+  100% {
+    outline-color: rgba(245, 215, 110, 0.4);
+  }
+  50% {
+    outline-color: rgba(245, 215, 110, 0.85);
+  }
+}
+
+.opp-field.pick-section {
+  animation-name: pick-section-pulse-opp;
+}
+
+@keyframes pick-section-pulse-opp {
+  0%,
+  100% {
+    outline-color: rgba(255, 140, 120, 0.4);
+  }
+  50% {
+    outline-color: rgba(255, 160, 140, 0.9);
+  }
+}
+
+.zone.pick-target {
+  border-color: rgba(245, 215, 110, 0.7);
+  box-shadow: 0 0 12px rgba(245, 215, 110, 0.3);
+}
+
+.zone.effect-source-zone {
+  box-shadow: 0 0 14px rgba(100, 190, 255, 0.45);
+}
+
 .zone.drop-ready {
   border-color: #ffe9a8;
   background: rgba(240, 208, 128, 0.28);
