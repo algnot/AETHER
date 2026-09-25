@@ -978,12 +978,6 @@ export function DeckBuilder() {
                           hoverKey === null)
                       }
                     />
-                    <span
-                      className={`variant-chip ${copy.evolved ? 'evo' : 'normal'}`}
-                      aria-hidden
-                    >
-                      {copy.evolved ? 'Evo' : 'ปกติ'}
-                    </span>
                   </div>
                 ))}
               </div>
@@ -1196,12 +1190,6 @@ export function DeckBuilder() {
                             hoverKey === null)
                         }
                       />
-                      <span
-                        className={`variant-chip ${evolved ? 'evo' : 'normal'}`}
-                        aria-hidden
-                      >
-                        {evolved ? 'Evo' : 'ปกติ'}
-                      </span>
                       {owned > 0 && (
                         <span
                           className={`qty-badge ${remaining <= 0 ? 'empty' : ''} ${evolved ? 'evo' : ''}`}
