@@ -416,35 +416,17 @@
   padding: 4px 0 16px;
 }
 
-.bulk-hero {
-  text-align: center;
-}
-
-.bulk-kicker {
+.bulk-actions {
+  position: sticky;
+  top: 0;
+  z-index: 5;
   margin: 0;
-  font-size: 0.72rem;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--g-brass);
-}
-
-.bulk-hero h2 {
-  margin: 4px 0 0;
-  font-family: 'Cormorant Garamond', Georgia, serif;
-  font-size: clamp(1.2rem, 3vw, 1.55rem);
-}
-
-.bulk-summary {
-  margin: 6px 0 0;
-  color: var(--g-muted);
-  font-size: 0.88rem;
-}
-
-.bulk-highlights h3,
-.bulk-pack-row header {
-  margin: 0 0 8px;
-  font-size: 0.85rem;
-  color: var(--g-muted);
+  padding: 8px 0 10px;
+  background: linear-gradient(
+    180deg,
+    rgba(8, 4, 18, 0.92) 55%,
+    rgba(8, 4, 18, 0)
+  );
 }
 
 .bulk-highlight-row {
@@ -463,28 +445,6 @@
   position: relative;
 }
 
-.bulk-chip {
-  position: absolute;
-  left: 50%;
-  bottom: -2px;
-  transform: translateX(-50%);
-  font-size: 0.65rem;
-  font-weight: 800;
-  padding: 1px 5px;
-  border-radius: 3px;
-  pointer-events: none;
-}
-
-.bulk-chip.rarity-SR {
-  background: #1e5fa0;
-  color: #d8ecff;
-}
-
-.bulk-chip.rarity-UR {
-  background: #b8860b;
-  color: #fff4cc;
-}
-
 .bulk-packs {
   display: flex;
   flex-direction: column;
@@ -500,7 +460,9 @@
 .bulk-pack-row header {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--g-muted);
 }
 
 .bulk-pack-row .muted {
