@@ -173,6 +173,7 @@ export function DeckBuilder() {
   const [nameModal, setNameModal] = useState<'rename' | 'create' | null>(null)
   const [renameTargetId, setRenameTargetId] = useState<string | null>(null)
   const [hint, setHint] = useState<string | null>(null)
+  const [tabletPanel, setTabletPanel] = useState<'deck' | 'catalog'>('catalog')
 
   const isCoarsePointer = () =>
     typeof window !== 'undefined' &&
@@ -562,7 +563,28 @@ export function DeckBuilder() {
             </div>
           </header>
 
-          <div className="builder-body">
+          <div className="builder-panel-tabs" role="tablist" aria-label="แผงจัดเด็ค">
+            <button
+              type="button"
+              role="tab"
+              className={tabletPanel === 'deck' ? 'on' : ''}
+              aria-selected={tabletPanel === 'deck'}
+              onClick={() => setTabletPanel('deck')}
+            >
+              ในเด็ค <span>{total}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={tabletPanel === 'catalog' ? 'on' : ''}
+              aria-selected={tabletPanel === 'catalog'}
+              onClick={() => setTabletPanel('catalog')}
+            >
+              คลังการ์ด
+            </button>
+          </div>
+
+          <div className={`builder-body panel-${tabletPanel}`}>
             <aside className="builder-preview">
               {previewCard && (
                 <>
